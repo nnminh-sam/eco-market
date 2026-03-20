@@ -6,6 +6,7 @@ import { PostAd } from "./pages/PostAd";
 import { Messages } from "./pages/Messages";
 import { MyListings } from "./pages/MyListings";
 import { Cart } from "./pages/Cart";
+import { Profile } from "./pages/Profile";
 
 export const appRoutes = {
   home: "/",
@@ -15,6 +16,7 @@ export const appRoutes = {
   messages: "/messages",
   myListings: "/my-listings",
   cart: "/cart",
+  profile: "/profile",
 };
 
 export function AppRoutes() {
@@ -27,6 +29,7 @@ export function AppRoutes() {
       <Route path={appRoutes.messages} element={<Messages />} />
       <Route path={appRoutes.myListings} element={<MyListings />} />
       <Route path={appRoutes.cart} element={<Cart />} />
+      <Route path={appRoutes.profile} element={<Profile />} />
       <Route path="*" element={<Navigate to={appRoutes.home} replace />} />
     </Routes>
   );

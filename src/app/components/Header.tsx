@@ -13,16 +13,9 @@ import { useCart } from "../context/CartContext";
 import { useMessages } from "../context/MessageContext";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "./ui/dropdown-menu";
 
 export function Header() {
-  const { user, logout, isAuthenticated } = useAuth();
+  const { logout, isAuthenticated } = useAuth();
   const { totalItems } = useCart();
   const { conversations } = useMessages();
   const unreadCount = conversations.reduce((sum, c) => sum + c.unreadCount, 0);
@@ -89,37 +82,15 @@ export function Header() {
                   <LogOut className="size-4" />
                   <span className="hidden sm:inline">Đăng xuất</span>
                 </Button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="rounded-full size-12 bg-gradient-to-br from-[#2d6a6a] to-[#2d6a6a]/80 hover:from-[#2d6a6a]/90 hover:to-[#2d6a6a]/70 shadow-md hover:shadow-lg transition-all"
-                    >
-                      <User className="size-6 text-white" />
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent
-                    align="end"
-                    className="w-56 rounded-2xl shadow-xl border-2 border-[#2d6a6a]/10"
+                <Link to="/profile" aria-label="Hồ sơ cá nhân">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="rounded-full size-12 bg-gradient-to-br from-[#2d6a6a] to-[#2d6a6a]/80 hover:from-[#2d6a6a]/90 hover:to-[#2d6a6a]/70 shadow-md hover:shadow-lg transition-all"
                   >
-                    <div className="px-3 py-3 bg-gradient-to-r from-[#2d6a6a]/5 to-[#ff7b3d]/5 rounded-t-xl">
-                      <p className="font-semibold text-[#2d6a6a]">
-                        {user?.name}
-                      </p>
-                      <p className="text-xs text-gray-600">{user?.email}</p>
-                    </div>
-                    <DropdownMenuSeparator />
-                    <DropdownMenuItem asChild>
-                      <Link
-                        to="/my-listings"
-                        className="cursor-pointer py-2.5 rounded-lg"
-                      >
-                        📦 Tin đăng của tôi
-                      </Link>
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                    <User className="size-6 text-white" />
+                  </Button>
+                </Link>
               </>
             ) : (
               <Link to="/login">

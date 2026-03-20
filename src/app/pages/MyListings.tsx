@@ -1,13 +1,15 @@
 import { useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
+import { useWishlist } from "../context/WishlistContext";
 import { products } from "../data/products";
 import { ProductCard } from "../components/ProductCard";
 import { Button } from "../components/ui/button";
-import { ArrowLeft, Plus, Package } from "lucide-react";
+import { ArrowLeft, Plus, Package, Heart } from "lucide-react";
 
 export function MyListings() {
   const { isAuthenticated, user } = useAuth();
+  const { wishlistProductIds } = useWishlist();
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -21,6 +23,9 @@ export function MyListings() {
   }
 
   const myProducts = products.filter((p) => p.seller.id === user?.id);
+  const wishlistProducts = wishlistProductIds
+    .map((productId) => products.find((product) => product.id === productId))
+    .filter((product): product is (typeof products)[number] => Boolean(product));
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#f5f5dc]/30 to-white">
@@ -78,6 +83,41 @@ export function MyListings() {
             </div>
           </>
         )}
+
+        <div className="mt-14">
+          <div className="flex items-center gap-3 mb-6">
+            <div className="p-2.5 bg-gradient-to-r from-[#ff7b3d] to-[#ff7b3d]/90 rounded-2xl shadow-lg">
+              <Heart className="size-6 text-white fill-white" />
+            </div>
+            <div>
+              <h2 className="text-3xl font-bold text-[#2f3e46]">Danh sách yêu thích</h2>
+              <p className="text-gray-600">{wishlistProducts.length} sản phẩm đã lưu</p>
+            </div>
+          </div>
+
+          {wishlistProducts.length === 0 ? (
+            <div className="text-center py-16 bg-white rounded-3xl border-2 border-dashed border-[#ff7b3d]/30 shadow-lg">
+              <div className="text-6xl mb-4">❤️</div>
+              <p className="text-2xl text-gray-700 mb-2 font-semibold">
+                Chưa có sản phẩm yêu thích
+              </p>
+              <p className="text-gray-500 mb-6">
+                Hãy nhấn vào biểu tượng trái tim để lưu sản phẩm bạn thích
+              </p>
+              <Link to="/">
+                <Button className="bg-[#ff7b3d] hover:bg-[#ff7b3d]/90 text-white rounded-full px-8 h-12 font-semibold">
+                  Khám phá sản phẩm
+                </Button>
+              </Link>
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
+              {wishlistProducts.map((product) => (
+                <ProductCard key={product.id} product={product} />
+              ))}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

@@ -236,7 +236,7 @@ async function handleSignUp(req, res) {
   const insertedUsers = await sql`
     INSERT INTO auth_users (name, email, password_hash)
     VALUES (${name}, ${email}, ${passwordHash})
-    RETURNING id, name, email, created_at::date AS joined_date
+    RETURNING id, name, email, created_at AS joined_date
   `;
 
   const user = insertedUsers[0];
@@ -264,7 +264,7 @@ async function handleLogin(req, res) {
   }
 
   const users = await sql`
-    SELECT id, name, email, password_hash, created_at::date AS joined_date
+    SELECT id, name, email, password_hash, created_at AS joined_date
     FROM auth_users
     WHERE email = ${email}
     LIMIT 1
@@ -309,7 +309,7 @@ async function handleMe(req, res) {
   }
 
   const sessions = await sql`
-    SELECT u.id, u.name, u.email, u.created_at::date AS joined_date
+    SELECT u.id, u.name, u.email, u.created_at AS joined_date
     FROM auth_sessions s
     JOIN auth_users u ON u.id = s.user_id
     WHERE s.token = ${token} AND s.expires_at > NOW()

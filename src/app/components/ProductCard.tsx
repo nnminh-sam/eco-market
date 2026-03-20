@@ -1,11 +1,13 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { MapPin, Eye, Calendar, Heart, ShoppingCart } from "lucide-react";
 import { Product } from "../types/product";
 import { Card, CardContent } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { MouseEvent, useState } from "react";
+import { useAuth } from "../context/AuthContext";
 import { useCart } from "../context/CartContext";
+import { useWishlist } from "../context/WishlistContext";
 import { toast } from "sonner";
 
 interface ProductCardProps {
@@ -14,7 +16,10 @@ interface ProductCardProps {
 
 export function ProductCard({ product }: ProductCardProps) {
   const [isHovered, setIsHovered] = useState(false);
+  const navigate = useNavigate();
+  const { isAuthenticated } = useAuth();
   const { addToCart, getItemQuantity } = useCart();
+  const { isInWishlist, toggleWishlist } = useWishlist();
   
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat("vi-VN").format(price) + " ₫";
@@ -39,7 +44,26 @@ export function ProductCard({ product }: ProductCardProps) {
     toast.success("Đã thêm sản phẩm vào giỏ hàng 🛒");
   };
 
+  const handleToggleWishlist = (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (!isAuthenticated) {
+      toast.error("Vui lòng đăng nhập để thêm vào danh sách yêu thích");
+      navigate("/login");
+      return;
+    }
+
+    const added = toggleWishlist(product.id);
+    toast.success(
+      added
+        ? "Đã thêm vào danh sách yêu thích ❤️"
+        : "Đã xóa khỏi danh sách yêu thích"
+    );
+  };
+
   const cartQuantity = getItemQuantity(product.id);
+  const inWishlist = isInWishlist(product.id);
 
   return (
     <Link to={`/product/${product.id}`}>
@@ -59,8 +83,18 @@ export function ProductCard({ product }: ProductCardProps) {
           <Badge className="absolute top-3 right-3 bg-[#ff7b3d] text-white shadow-lg rounded-full px-3 py-1.5 font-semibold">
             {product.condition}
           </Badge>
-          <button className="absolute top-3 left-3 p-2 bg-white/90 backdrop-blur-sm rounded-full shadow-lg hover:bg-white transition-all hover:scale-110">
-            <Heart className="size-5 text-[#2d6a6a]" />
+          <button
+            type="button"
+            onClick={handleToggleWishlist}
+            className="absolute top-3 left-3 p-2 bg-white/90 backdrop-blur-sm rounded-full shadow-lg hover:bg-white transition-all hover:scale-110"
+          >
+            <Heart
+              className={`size-5 transition-colors ${
+                inWishlist
+                  ? "text-[#ff7b3d] fill-[#ff7b3d]"
+                  : "text-[#2d6a6a]"
+              }`}
+            />
           </button>
         </div>
         <CardContent className="pt-5 pb-4 px-4">
