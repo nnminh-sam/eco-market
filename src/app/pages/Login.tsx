@@ -14,20 +14,40 @@ import { Recycle, Sparkles, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
 
 export function Login() {
+  const [isSignUpMode, setIsSignUpMode] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const { login } = useAuth();
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const { login, signup } = useAuth();
   const navigate = useNavigate();
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
-    const success = await login(email, password);
-    if (success) {
-      toast.success("Đăng nhập thành công! 🎉");
+
+    if (isSignUpMode && password !== confirmPassword) {
+      toast.error("Mật khẩu xác nhận không khớp.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    const result = isSignUpMode
+      ? await signup(email, password)
+      : await login(email, password);
+    setIsSubmitting(false);
+
+    if (result.success) {
+      toast.success(result.message ?? "Thành công!");
       navigate("/");
     } else {
-      toast.error("Sai email hoặc mật khẩu. Thử: nguyenvana@example.com");
+      toast.error(result.message ?? "Đăng nhập thất bại.");
     }
+  };
+
+  const toggleMode = () => {
+    setIsSignUpMode((prev) => !prev);
+    setPassword("");
+    setConfirmPassword("");
   };
 
   return (
@@ -54,7 +74,9 @@ export function Login() {
             <span className="text-sm font-medium">Chợ Đồ Cũ Xanh</span>
           </div>
           <CardDescription className="text-base">
-            Đăng nhập để đăng tin và nhắn tin với người bán
+            {isSignUpMode
+              ? "Tạo tài khoản bằng email và mật khẩu"
+              : "Đăng nhập để đăng tin và nhắn tin với người bán"}
           </CardDescription>
         </CardHeader>
         <CardContent className="px-8 pb-8">
@@ -87,35 +109,48 @@ export function Login() {
                 className="h-12 rounded-xl border-2 border-[#2d6a6a]/20 focus:border-[#2d6a6a] transition-all"
               />
             </div>
+            {isSignUpMode && (
+              <div className="space-y-2">
+                <Label htmlFor="confirmPassword" className="text-[#2f3e46]">
+                  Xác nhận mật khẩu
+                </Label>
+                <Input
+                  id="confirmPassword"
+                  type="password"
+                  placeholder="••••••••"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  required
+                  className="h-12 rounded-xl border-2 border-[#2d6a6a]/20 focus:border-[#2d6a6a] transition-all"
+                />
+              </div>
+            )}
             <Button
               type="submit"
+              disabled={isSubmitting}
               className="w-full h-12 bg-gradient-to-r from-[#2d6a6a] to-[#2d6a6a]/90 hover:from-[#2d6a6a]/90 hover:to-[#2d6a6a]/80 text-white shadow-lg hover:shadow-xl rounded-xl font-semibold transition-all transform hover:-translate-y-0.5 group"
             >
-              <span>Đăng nhập</span>
+              <span>
+                {isSubmitting
+                  ? "Đang xử lý..."
+                  : isSignUpMode
+                    ? "Tạo tài khoản"
+                    : "Đăng nhập"}
+              </span>
               <ArrowRight className="size-5 ml-2 group-hover:translate-x-1 transition-transform" />
             </Button>
           </form>
 
-          <div className="mt-6 p-5 bg-gradient-to-r from-[#2d6a6a]/5 to-[#ff7b3d]/5 rounded-2xl border-2 border-[#2d6a6a]/10">
-            <div className="flex items-center gap-2 mb-3">
-              <Sparkles className="size-4 text-[#ff7b3d]" />
-              <p className="text-sm font-semibold text-[#2f3e46]">
-                Demo accounts
-              </p>
-            </div>
-            <div className="space-y-1.5 text-sm text-gray-600">
-              <p>
-                <span className="font-medium text-[#2d6a6a]">📧</span>{" "}
-                nguyenvana@example.com
-              </p>
-              <p>
-                <span className="font-medium text-[#2d6a6a]">📧</span>{" "}
-                tranthib@example.com
-              </p>
-              <p className="text-xs text-gray-500 mt-3 italic">
-                💡 Bất kỳ mật khẩu nào cũng được
-              </p>
-            </div>
+          <div className="mt-6 text-center">
+            <button
+              type="button"
+              onClick={toggleMode}
+              className="text-[#2d6a6a] hover:text-[#ff7b3d] font-medium transition-colors"
+            >
+              {isSignUpMode
+                ? "Đã có tài khoản? Đăng nhập"
+                : "Chưa có tài khoản? Đăng ký"}
+            </button>
           </div>
 
           <div className="mt-6 text-center">

@@ -1,31 +1,211 @@
-import { createContext, useContext, useState, ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { User } from "../types/product";
-import { mockUsers } from "../data/products";
+
+interface AuthResult {
+  success: boolean;
+  message?: string;
+}
+
+interface AuthApiResponse {
+  success?: boolean;
+  message?: string;
+  token?: string;
+  user?: User;
+}
 
 interface AuthContextType {
   user: User | null;
-  login: (email: string, password: string) => Promise<boolean>;
+  login: (email: string, password: string) => Promise<AuthResult>;
+  signup: (email: string, password: string) => Promise<AuthResult>;
   logout: () => void;
   isAuthenticated: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+const SESSION_TOKEN_STORAGE_KEY = "marketeo-auth-session-token";
+const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "";
+const apiBaseUrl = rawApiBaseUrl.replace(/\/$/, "");
+
+function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
+async function requestAuthApi(path: string, init?: RequestInit) {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
+    ...init,
+    headers: {
+      "Content-Type": "application/json",
+      ...(init?.headers ?? {}),
+    },
+  });
+
+  let data: AuthApiResponse = {};
+
+  try {
+    data = (await response.json()) as AuthApiResponse;
+  } catch {
+    data = {};
+  }
+
+  return {
+    ok: response.ok,
+    status: response.status,
+    data,
+  };
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
 
-  const login = async (email: string, password: string): Promise<boolean> => {
-    // Mock login - in real app, this would call an API
-    const foundUser = mockUsers.find((u) => u.email === email);
-    if (foundUser) {
-      setUser(foundUser);
-      return true;
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
     }
-    return false;
+
+    let isMounted = true;
+
+    const restoreSession = async () => {
+      const token = window.localStorage.getItem(SESSION_TOKEN_STORAGE_KEY);
+      if (!token) {
+        return;
+      }
+
+      try {
+        const response = await requestAuthApi("/api/auth/me", {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (!isMounted) {
+          return;
+        }
+
+        if (response.ok && response.data.success && response.data.user) {
+          setUser(response.data.user);
+          return;
+        }
+      } catch {
+        if (!isMounted) {
+          return;
+        }
+      }
+
+      window.localStorage.removeItem(SESSION_TOKEN_STORAGE_KEY);
+      setUser(null);
+    };
+
+    void restoreSession();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const login = async (email: string, password: string): Promise<AuthResult> => {
+    try {
+      const response = await requestAuthApi("/api/auth/login", {
+        method: "POST",
+        body: JSON.stringify({
+          email: normalizeEmail(email),
+          password,
+        }),
+      });
+
+      if (!response.ok || !response.data.success) {
+        return {
+          success: false,
+          message: response.data.message ?? "Sai email hoặc mật khẩu.",
+        };
+      }
+
+      if (!response.data.user || !response.data.token) {
+        return {
+          success: false,
+          message: "Phản hồi đăng nhập không hợp lệ.",
+        };
+      }
+
+      setUser(response.data.user);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(SESSION_TOKEN_STORAGE_KEY, response.data.token);
+      }
+
+      return {
+        success: true,
+        message: response.data.message ?? "Đăng nhập thành công!",
+      };
+    } catch {
+      return {
+        success: false,
+        message: "Không thể kết nối đến máy chủ đăng nhập.",
+      };
+    }
+  };
+
+  const signup = async (email: string, password: string): Promise<AuthResult> => {
+    try {
+      const response = await requestAuthApi("/api/auth/sign-up", {
+        method: "POST",
+        body: JSON.stringify({
+          email: normalizeEmail(email),
+          password,
+        }),
+      });
+
+      if (!response.ok || !response.data.success) {
+        return {
+          success: false,
+          message: response.data.message ?? "Đăng ký thất bại.",
+        };
+      }
+
+      if (!response.data.user || !response.data.token) {
+        return {
+          success: false,
+          message: "Phản hồi đăng ký không hợp lệ.",
+        };
+      }
+
+      setUser(response.data.user);
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem(SESSION_TOKEN_STORAGE_KEY, response.data.token);
+      }
+
+      return {
+        success: true,
+        message: response.data.message ?? "Tạo tài khoản thành công!",
+      };
+    } catch {
+      return {
+        success: false,
+        message: "Không thể kết nối đến máy chủ đăng ký.",
+      };
+    }
   };
 
   const logout = () => {
+    const token =
+      typeof window === "undefined"
+        ? null
+        : window.localStorage.getItem(SESSION_TOKEN_STORAGE_KEY);
+
     setUser(null);
+
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(SESSION_TOKEN_STORAGE_KEY);
+    }
+
+    if (token) {
+      void requestAuthApi("/api/auth/sign-out", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+    }
   };
 
   return (
@@ -33,6 +213,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       value={{
         user,
         login,
+        signup,
         logout,
         isAuthenticated: !!user,
       }}

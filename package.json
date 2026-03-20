@@ -6,9 +6,12 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "db:check": "node --env-file=.env scripts/check-neon-connection.mjs",
+    "start": "node --env-file=.env server/app.mjs"
   },
   "dependencies": {
+    "@neondatabase/serverless": "0.10.4",
     "@emotion/react": "11.14.0",
     "@emotion/styled": "11.14.1",
     "@mui/icons-material": "7.3.5",

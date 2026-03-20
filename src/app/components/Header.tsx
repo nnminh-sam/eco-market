@@ -66,6 +66,15 @@ export function Header() {
                     </Badge>
                   )}
                 </Link>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={logout}
+                  className="gap-2 border-2 border-[#2d6a6a]/30 text-[#2d6a6a] hover:bg-[#2d6a6a] hover:text-white rounded-full px-4"
+                >
+                  <LogOut className="size-4" />
+                  <span className="hidden sm:inline">Đăng xuất</span>
+                </Button>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button
@@ -94,13 +103,6 @@ export function Header() {
                       >
                         📦 Tin đăng của tôi
                       </Link>
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={logout}
-                      className="cursor-pointer text-red-600 py-2.5 rounded-lg"
-                    >
-                      <LogOut className="size-4 mr-2" />
-                      Đăng xuất
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
