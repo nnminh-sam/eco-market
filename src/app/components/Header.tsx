@@ -5,9 +5,11 @@ import {
   LogOut,
   Plus,
   Recycle,
+  ShoppingCart,
   Sparkles,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
+import { useCart } from "../context/CartContext";
 import { useMessages } from "../context/MessageContext";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -21,6 +23,7 @@ import {
 
 export function Header() {
   const { user, logout, isAuthenticated } = useAuth();
+  const { totalItems } = useCart();
   const { conversations } = useMessages();
   const unreadCount = conversations.reduce((sum, c) => sum + c.unreadCount, 0);
 
@@ -47,6 +50,17 @@ export function Header() {
           </Link>
 
           <nav className="flex items-center gap-3">
+            <Link
+              to="/cart"
+              className="relative p-3 hover:bg-[#2d6a6a]/10 rounded-full transition-all group"
+            >
+              <ShoppingCart className="size-6 text-[#2d6a6a] group-hover:scale-110 transition-transform" />
+              {totalItems > 0 && (
+                <Badge className="absolute -top-1 -right-1 size-6 flex items-center justify-center p-0 text-xs bg-[#ff7b3d] border-2 border-white">
+                  {totalItems > 99 ? "99+" : totalItems}
+                </Badge>
+              )}
+            </Link>
             {isAuthenticated ? (
               <>
                 <Link to="/post-ad">

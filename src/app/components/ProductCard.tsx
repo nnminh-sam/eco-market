@@ -1,9 +1,12 @@
 import { Link } from "react-router-dom";
-import { MapPin, Eye, Calendar, Heart } from "lucide-react";
+import { MapPin, Eye, Calendar, Heart, ShoppingCart } from "lucide-react";
 import { Product } from "../types/product";
 import { Card, CardContent } from "./ui/card";
 import { Badge } from "./ui/badge";
-import { useState } from "react";
+import { Button } from "./ui/button";
+import { MouseEvent, useState } from "react";
+import { useCart } from "../context/CartContext";
+import { toast } from "sonner";
 
 interface ProductCardProps {
   product: Product;
@@ -11,6 +14,7 @@ interface ProductCardProps {
 
 export function ProductCard({ product }: ProductCardProps) {
   const [isHovered, setIsHovered] = useState(false);
+  const { addToCart, getItemQuantity } = useCart();
   
   const formatPrice = (price: number) => {
     return new Intl.NumberFormat("vi-VN").format(price) + " ₫";
@@ -27,6 +31,15 @@ export function ProductCard({ product }: ProductCardProps) {
     if (diffDays < 7) return `${diffDays} ngày trước`;
     return date.toLocaleDateString("vi-VN");
   };
+
+  const handleAddToCart = (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    addToCart(product, 1);
+    toast.success("Đã thêm sản phẩm vào giỏ hàng 🛒");
+  };
+
+  const cartQuantity = getItemQuantity(product.id);
 
   return (
     <Link to={`/product/${product.id}`}>
@@ -75,6 +88,16 @@ export function ProductCard({ product }: ProductCardProps) {
               </div>
             </div>
           </div>
+          <Button
+            type="button"
+            onClick={handleAddToCart}
+            className="w-full mt-4 bg-[#2d6a6a] hover:bg-[#2d6a6a]/90 text-white rounded-xl"
+          >
+            <ShoppingCart className="size-4" />
+            {cartQuantity > 0
+              ? `Thêm nữa (${cartQuantity} trong giỏ)`
+              : "Thêm vào giỏ"}
+          </Button>
         </CardContent>
       </Card>
     </Link>

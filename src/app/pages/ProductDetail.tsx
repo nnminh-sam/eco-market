@@ -1,10 +1,11 @@
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { MapPin, Eye, Calendar, MessageCircle, ArrowLeft, User, Phone, Share2, Heart } from "lucide-react";
+import { MapPin, Eye, Calendar, MessageCircle, ArrowLeft, User, Phone, Share2, Heart, ShoppingCart } from "lucide-react";
 import { products } from "../data/products";
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { useAuth } from "../context/AuthContext";
+import { useCart } from "../context/CartContext";
 import { toast } from "sonner";
 
 export function ProductDetail() {
@@ -12,6 +13,7 @@ export function ProductDetail() {
   const navigate = useNavigate();
   const id = params?.id;
   const { isAuthenticated } = useAuth();
+  const { addToCart, getItemQuantity } = useCart();
   const product = products.find((p) => p.id === id);
 
   if (!product) {
@@ -47,6 +49,13 @@ export function ProductDetail() {
   const handleShare = () => {
     toast.success("Đã copy link sản phẩm! 📋");
   };
+
+  const handleAddToCart = () => {
+    addToCart(product, 1);
+    toast.success("Đã thêm sản phẩm vào giỏ hàng 🛒");
+  };
+
+  const cartQuantity = getItemQuantity(product.id);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#f5f5dc]/30 to-white">
@@ -157,6 +166,16 @@ export function ProductDetail() {
                   )}
                 </div>
                 <CardContent className="p-6">
+                  <Button
+                    onClick={handleAddToCart}
+                    variant="outline"
+                    className="w-full gap-3 h-14 border-2 border-[#2d6a6a] text-[#2d6a6a] hover:bg-[#2d6a6a] hover:text-white rounded-2xl font-semibold text-lg mb-3"
+                  >
+                    <ShoppingCart className="size-5" />
+                    {cartQuantity > 0
+                      ? `Đã có ${cartQuantity} trong giỏ`
+                      : "Thêm vào giỏ hàng"}
+                  </Button>
                   <Button
                     onClick={handleContactSeller}
                     className="w-full gap-3 h-14 bg-[#ff7b3d] hover:bg-[#ff7b3d]/90 text-white shadow-lg hover:shadow-xl rounded-2xl font-semibold text-lg transition-all transform hover:-translate-y-0.5"
