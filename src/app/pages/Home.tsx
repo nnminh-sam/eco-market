@@ -1,23 +1,74 @@
-import { useState } from "react";
-import { products, categories } from "../data/products";
+import { useEffect, useMemo, useState } from "react";
 import { ProductCard } from "../components/ProductCard";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { Search, TrendingUp, Zap } from "lucide-react";
+import { getProducts } from "../services/marketApi";
+import { productCategoryFilters } from "../constants/productCategories";
+import { Product } from "../types/product";
 
 export function Home() {
   const [selectedCategory, setSelectedCategory] = useState("Tất cả");
   const [searchTerm, setSearchTerm] = useState("");
+  const [products, setProducts] = useState<Product[]>([]);
+  const [isLoadingProducts, setIsLoadingProducts] = useState(true);
+  const [loadingError, setLoadingError] = useState("");
 
-  const filteredProducts = products.filter((product) => {
-    const matchesCategory =
-      selectedCategory === "Tất cả" || product.category === selectedCategory;
-    const matchesSearch =
-      searchTerm === "" ||
-      product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      product.description.toLowerCase().includes(searchTerm.toLowerCase());
-    return matchesCategory && matchesSearch;
-  });
+  useEffect(() => {
+    let isMounted = true;
+
+    const fetchProducts = async () => {
+      setIsLoadingProducts(true);
+      const response = await getProducts();
+
+      if (!isMounted) {
+        return;
+      }
+
+      if (!response.success) {
+        setLoadingError(response.message ?? "Không thể tải danh sách sản phẩm.");
+        setProducts([]);
+        setIsLoadingProducts(false);
+        return;
+      }
+
+      setProducts(response.data ?? []);
+      setLoadingError("");
+      setIsLoadingProducts(false);
+    };
+
+    void fetchProducts();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  const categories = useMemo(() => {
+    const allCategories = new Set(productCategoryFilters);
+
+    products.forEach((product) => {
+      if (product.category) {
+        allCategories.add(product.category);
+      }
+    });
+
+    return Array.from(allCategories);
+  }, [products]);
+
+  const filteredProducts = useMemo(
+    () =>
+      products.filter((product) => {
+        const matchesCategory =
+          selectedCategory === "Tất cả" || product.category === selectedCategory;
+        const matchesSearch =
+          searchTerm === "" ||
+          product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+          product.description.toLowerCase().includes(searchTerm.toLowerCase());
+        return matchesCategory && matchesSearch;
+      }),
+    [products, selectedCategory, searchTerm]
+  );
 
   return (
     <div className="min-h-screen">
@@ -116,13 +167,24 @@ export function Home() {
         </div>
 
         {/* Products Grid */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
-          {filteredProducts.map((product) => (
-            <ProductCard key={product.id} product={product} />
-          ))}
-        </div>
+        {isLoadingProducts ? (
+          <div className="text-center py-16 bg-white rounded-3xl shadow-lg border-2 border-dashed border-[#2d6a6a]/30">
+            <p className="text-xl text-gray-600">Đang tải sản phẩm...</p>
+          </div>
+        ) : loadingError ? (
+          <div className="text-center py-16 bg-white rounded-3xl shadow-lg border-2 border-dashed border-red-200">
+            <p className="text-xl text-red-600 mb-2">Không thể tải sản phẩm</p>
+            <p className="text-gray-500">{loadingError}</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
+            {filteredProducts.map((product) => (
+              <ProductCard key={product.id} product={product} />
+            ))}
+          </div>
+        )}
 
-        {filteredProducts.length === 0 && (
+        {!isLoadingProducts && !loadingError && filteredProducts.length === 0 && (
           <div className="text-center py-20 bg-white rounded-3xl shadow-lg border-2 border-dashed border-[#2d6a6a]/30">
             <div className="text-6xl mb-4">🔍</div>
             <p className="text-2xl text-gray-500 mb-2">

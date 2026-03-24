@@ -1,22 +1,43 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ArrowLeft, Mail, Calendar, Package, ShoppingCart, User, Heart } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { useWishlist } from "../context/WishlistContext";
-import { products } from "../data/products";
 import { ProductCard } from "../components/ProductCard";
 import { Card, CardContent } from "../components/ui/card";
 import { Button } from "../components/ui/button";
+import { Product } from "../types/product";
+import { getProducts } from "../services/marketApi";
 
 export function Profile() {
   const { isAuthenticated, user } = useAuth();
   const { wishlistProductIds } = useWishlist();
   const navigate = useNavigate();
+  const [allProducts, setAllProducts] = useState<Product[]>([]);
 
   useEffect(() => {
     if (!isAuthenticated) {
       navigate("/login");
+      return;
     }
+
+    let isMounted = true;
+
+    const fetchProducts = async () => {
+      const response = await getProducts();
+
+      if (!isMounted) {
+        return;
+      }
+
+      setAllProducts(response.data ?? []);
+    };
+
+    void fetchProducts();
+
+    return () => {
+      isMounted = false;
+    };
   }, [isAuthenticated, navigate]);
 
   if (!isAuthenticated || !user) {
@@ -35,9 +56,13 @@ export function Profile() {
         minute: "2-digit",
       });
 
-  const wishlistProducts = wishlistProductIds
-    .map((productId) => products.find((product) => product.id === productId))
-    .filter((product): product is (typeof products)[number] => Boolean(product));
+  const wishlistProducts = useMemo(
+    () =>
+      wishlistProductIds
+        .map((productId) => allProducts.find((product) => product.id === productId))
+        .filter((product): product is Product => Boolean(product)),
+    [allProducts, wishlistProductIds]
+  );
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#f5f5dc]/30 to-white">

@@ -1,6 +1,5 @@
 import { createContext, useContext, useState, ReactNode } from "react";
 import { Message, Conversation } from "../types/product";
-import { products } from "../data/products";
 
 interface MessageContextType {
   conversations: Conversation[];
@@ -13,50 +12,9 @@ interface MessageContextType {
 const MessageContext = createContext<MessageContextType | undefined>(undefined);
 
 export function MessageProvider({ children }: { children: ReactNode }) {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: "1",
-      senderId: "2",
-      receiverId: "1",
-      productId: "1",
-      content: "Xin chào, sản phẩm còn không ạ?",
-      timestamp: "2026-03-18T10:30:00",
-      read: true
-    },
-    {
-      id: "2",
-      senderId: "1",
-      receiverId: "2",
-      productId: "1",
-      content: "Dạ còn ạ! Bạn có muốn xem thêm ảnh không?",
-      timestamp: "2026-03-18T10:35:00",
-      read: true
-    }
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
 
-  const [conversations, setConversations] = useState<Conversation[]>([
-    {
-      id: "conv-1",
-      productId: "1",
-      product: products[0],
-      otherUser: {
-        id: "2",
-        name: "Trần Thị B",
-        email: "tranthib@example.com",
-        joinedDate: "2024-02-20"
-      },
-      lastMessage: {
-        id: "2",
-        senderId: "1",
-        receiverId: "2",
-        productId: "1",
-        content: "Dạ còn ạ! Bạn có muốn xem thêm ảnh không?",
-        timestamp: "2026-03-18T10:35:00",
-        read: true
-      },
-      unreadCount: 0
-    }
-  ]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
 
   const sendMessage = (productId: string, receiverId: string, content: string) => {
     const newMessage: Message = {

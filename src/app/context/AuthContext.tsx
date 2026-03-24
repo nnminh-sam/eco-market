@@ -23,7 +23,7 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const SESSION_TOKEN_STORAGE_KEY = "marketeo-auth-session-token";
+export const AUTH_SESSION_TOKEN_STORAGE_KEY = "marketeo-auth-session-token";
 const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? "";
 const apiBaseUrl = rawApiBaseUrl.replace(/\/$/, "");
 
@@ -66,7 +66,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let isMounted = true;
 
     const restoreSession = async () => {
-      const token = window.localStorage.getItem(SESSION_TOKEN_STORAGE_KEY);
+      const token = window.localStorage.getItem(AUTH_SESSION_TOKEN_STORAGE_KEY);
       if (!token) {
         return;
       }
@@ -93,7 +93,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       }
 
-      window.localStorage.removeItem(SESSION_TOKEN_STORAGE_KEY);
+      window.localStorage.removeItem(AUTH_SESSION_TOKEN_STORAGE_KEY);
       setUser(null);
     };
 
@@ -130,7 +130,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       setUser(response.data.user);
       if (typeof window !== "undefined") {
-        window.localStorage.setItem(SESSION_TOKEN_STORAGE_KEY, response.data.token);
+        window.localStorage.setItem(AUTH_SESSION_TOKEN_STORAGE_KEY, response.data.token);
       }
 
       return {
@@ -171,7 +171,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       setUser(response.data.user);
       if (typeof window !== "undefined") {
-        window.localStorage.setItem(SESSION_TOKEN_STORAGE_KEY, response.data.token);
+        window.localStorage.setItem(AUTH_SESSION_TOKEN_STORAGE_KEY, response.data.token);
       }
 
       return {
@@ -190,12 +190,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const token =
       typeof window === "undefined"
         ? null
-        : window.localStorage.getItem(SESSION_TOKEN_STORAGE_KEY);
+        : window.localStorage.getItem(AUTH_SESSION_TOKEN_STORAGE_KEY);
 
     setUser(null);
 
     if (typeof window !== "undefined") {
-      window.localStorage.removeItem(SESSION_TOKEN_STORAGE_KEY);
+      window.localStorage.removeItem(AUTH_SESSION_TOKEN_STORAGE_KEY);
     }
 
     if (token) {

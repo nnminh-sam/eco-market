@@ -1,12 +1,14 @@
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { MapPin, Eye, Calendar, MessageCircle, ArrowLeft, User, Phone, Share2, Heart, ShoppingCart } from "lucide-react";
-import { products } from "../data/products";
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
 import { useAuth } from "../context/AuthContext";
 import { useCart } from "../context/CartContext";
 import { toast } from "sonner";
+import { Product } from "../types/product";
+import { getProductById } from "../services/marketApi";
 
 export function ProductDetail() {
   const params = useParams<{ id: string }>();
@@ -14,7 +16,49 @@ export function ProductDetail() {
   const id = params?.id;
   const { isAuthenticated } = useAuth();
   const { addToCart, getItemQuantity } = useCart();
-  const product = products.find((p) => p.id === id);
+  const [product, setProduct] = useState<Product | null>(null);
+  const [isLoadingProduct, setIsLoadingProduct] = useState(true);
+
+  useEffect(() => {
+    if (!id) {
+      setIsLoadingProduct(false);
+      return;
+    }
+
+    let isMounted = true;
+
+    const fetchProduct = async () => {
+      setIsLoadingProduct(true);
+      const response = await getProductById(id);
+
+      if (!isMounted) {
+        return;
+      }
+
+      if (!response.success || !response.data) {
+        setProduct(null);
+        setIsLoadingProduct(false);
+        return;
+      }
+
+      setProduct(response.data);
+      setIsLoadingProduct(false);
+    };
+
+    void fetchProduct();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [id]);
+
+  if (isLoadingProduct) {
+    return (
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16 text-center">
+        <p className="text-xl text-gray-600">Đang tải thông tin sản phẩm...</p>
+      </div>
+    );
+  }
 
   if (!product) {
     return (

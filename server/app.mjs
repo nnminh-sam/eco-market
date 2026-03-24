@@ -3,7 +3,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
 import { promisify } from "node:util";
-import { randomBytes, randomUUID, scrypt, timingSafeEqual } from "node:crypto";
+import {
+  createHash,
+  createHmac,
+  randomBytes,
+  randomUUID,
+  scrypt,
+  timingSafeEqual,
+} from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { neon } from "@neondatabase/serverless";
 
@@ -13,6 +20,20 @@ const host = process.env.APP_HOST ?? "0.0.0.0";
 const port = Number(process.env.APP_PORT ?? 8787);
 const corsOrigin = process.env.APP_CORS_ORIGIN ?? "*";
 const databaseUrl = process.env.DATABASE_URL;
+const s3Region = String(process.env.S3_REGION ?? "").trim();
+const s3BucketName = String(process.env.S3_BUCKET_NAME ?? "").trim();
+const s3AccessKeyId = String(process.env.S3_ACCESS_KEY_ID ?? "").trim();
+const s3SecretAccessKey = String(process.env.S3_SECRET_ACCESS_KEY ?? "").trim();
+const s3UploadKeyPrefix = String(process.env.S3_UPLOAD_KEY_PREFIX ?? "products")
+  .trim()
+  .replace(/^\/+|\/+$/g, "");
+const s3PublicBaseUrl = String(process.env.S3_PUBLIC_BASE_URL ?? "")
+  .trim()
+  .replace(/\/+$/g, "");
+
+const allowedUploadContentTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
+const validListingConditions = new Set(["Like New", "Very Good", "Good", "Fair"]);
+const maxUploadUrlExpiresInSeconds = 300;
 
 if (!databaseUrl) {
   throw new Error("Missing DATABASE_URL. Add it to your .env file.");
@@ -71,6 +92,132 @@ async function ensureHealthLogTable() {
       checked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `;
+}
+
+async function ensureProductsTable() {
+  await sql`
+    CREATE TABLE IF NOT EXISTS products (
+      id BIGSERIAL PRIMARY KEY,
+      created_by_user_id BIGINT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      category TEXT NOT NULL,
+      item_condition TEXT NOT NULL,
+      price BIGINT NOT NULL CHECK (price > 0),
+      location TEXT NOT NULL,
+      description TEXT NOT NULL,
+      size TEXT,
+      brand TEXT,
+      image_urls JSONB NOT NULL DEFAULT '[]'::jsonb,
+      views BIGINT NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `;
+}
+
+function hasS3Configuration() {
+  return Boolean(s3Region && s3BucketName && s3AccessKeyId && s3SecretAccessKey);
+}
+
+function encodeRfc3986(value) {
+  return encodeURIComponent(value).replace(/[!'()*]/g, (character) =>
+    `%${character.charCodeAt(0).toString(16).toUpperCase()}`
+  );
+}
+
+function toAmzDate(date) {
+  const iso = date.toISOString();
+  return iso.replace(/[:-]|\.\d{3}/g, "");
+}
+
+function hashSha256Hex(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function hmacSha256(key, value) {
+  return createHmac("sha256", key).update(value).digest();
+}
+
+function buildSigningKey(secretAccessKey, dateStamp, region, service) {
+  const kDate = hmacSha256(`AWS4${secretAccessKey}`, dateStamp);
+  const kRegion = hmacSha256(kDate, region);
+  const kService = hmacSha256(kRegion, service);
+  return hmacSha256(kService, "aws4_request");
+}
+
+function encodeS3ObjectKeyForPath(objectKey) {
+  return objectKey
+    .split("/")
+    .map((segment) => encodeRfc3986(segment))
+    .join("/");
+}
+
+function buildS3ObjectUrl(objectKey) {
+  const encodedKeyPath = encodeS3ObjectKeyForPath(objectKey);
+
+  if (s3PublicBaseUrl) {
+    return `${s3PublicBaseUrl}/${encodedKeyPath}`;
+  }
+
+  return `https://${s3BucketName}.s3.${s3Region}.amazonaws.com/${encodedKeyPath}`;
+}
+
+function sanitizeFileName(fileName) {
+  const baseName = path.basename(String(fileName).trim());
+
+  if (!baseName) {
+    return "file";
+  }
+
+  return baseName
+    .replace(/\s+/g, "-")
+    .replace(/[^a-zA-Z0-9._-]/g, "")
+    .replace(/-+/g, "-")
+    .slice(0, 80);
+}
+
+function buildPresignedS3PutUrl({
+  objectKey,
+  expiresInSeconds,
+}) {
+  const currentTime = new Date();
+  const amzDate = toAmzDate(currentTime);
+  const dateStamp = amzDate.slice(0, 8);
+  const serviceName = "s3";
+  const hostName = `${s3BucketName}.s3.${s3Region}.amazonaws.com`;
+  const credentialScope = `${dateStamp}/${s3Region}/${serviceName}/aws4_request`;
+  const canonicalUri = `/${encodeS3ObjectKeyForPath(objectKey)}`;
+  const canonicalQueryEntries = [
+    ["X-Amz-Algorithm", "AWS4-HMAC-SHA256"],
+    ["X-Amz-Credential", `${s3AccessKeyId}/${credentialScope}`],
+    ["X-Amz-Date", amzDate],
+    ["X-Amz-Expires", String(expiresInSeconds)],
+    ["X-Amz-SignedHeaders", "host"],
+  ];
+
+  const canonicalQueryString = canonicalQueryEntries
+    .map(([queryKey, queryValue]) => `${encodeRfc3986(queryKey)}=${encodeRfc3986(queryValue)}`)
+    .join("&");
+
+  const canonicalRequest = [
+    "PUT",
+    canonicalUri,
+    canonicalQueryString,
+    `host:${hostName}\n`,
+    "host",
+    "UNSIGNED-PAYLOAD",
+  ].join("\n");
+
+  const stringToSign = [
+    "AWS4-HMAC-SHA256",
+    amzDate,
+    credentialScope,
+    hashSha256Hex(canonicalRequest),
+  ].join("\n");
+
+  const signingKey = buildSigningKey(s3SecretAccessKey, dateStamp, s3Region, serviceName);
+  const signature = createHmac("sha256", signingKey).update(stringToSign).digest("hex");
+
+  return `https://${hostName}${canonicalUri}?${canonicalQueryString}&X-Amz-Signature=${signature}`;
 }
 
 function normalizeEmail(email) {
@@ -186,6 +333,69 @@ async function createSession(userId) {
   `;
 
   return token;
+}
+
+async function getUserFromSessionToken(token) {
+  if (!token) {
+    return null;
+  }
+
+  const sessions = await sql`
+    SELECT u.id, u.name, u.email, u.created_at AS joined_date
+    FROM auth_sessions s
+    JOIN auth_users u ON u.id = s.user_id
+    WHERE s.token = ${token} AND s.expires_at > NOW()
+    LIMIT 1
+  `;
+
+  return sessions[0] ?? null;
+}
+
+function normalizeImageUrls(imageUrls) {
+  if (typeof imageUrls === "string") {
+    try {
+      const parsed = JSON.parse(imageUrls);
+      return normalizeImageUrls(parsed);
+    } catch {
+      return [];
+    }
+  }
+
+  if (!Array.isArray(imageUrls)) {
+    return [];
+  }
+
+  return imageUrls
+    .map((imageUrl) => String(imageUrl).trim())
+    .filter((imageUrl) => imageUrl.startsWith("http://") || imageUrl.startsWith("https://"));
+}
+
+function mapProductRow(productRow) {
+  const imageUrls = normalizeImageUrls(productRow.image_urls);
+  const fallbackImageUrl =
+    "https://images.unsplash.com/photo-1591369822096-ffd140ec948f?auto=format&fit=crop&w=1200&q=80";
+
+  return {
+    id: String(productRow.id),
+    name: productRow.name,
+    price: Number(productRow.price),
+    image: imageUrls[0] ?? fallbackImageUrl,
+    images: imageUrls,
+    category: productRow.category,
+    description: productRow.description,
+    condition: productRow.item_condition,
+    size: productRow.size,
+    brand: productRow.brand,
+    location: productRow.location,
+    seller: {
+      id: String(productRow.seller_id),
+      name: productRow.seller_name,
+      email: productRow.seller_email,
+      joinedDate: productRow.seller_joined_date,
+    },
+    postedDate: productRow.created_at,
+    views: Number(productRow.views ?? 0),
+  };
 }
 
 async function handleSignUp(req, res) {
@@ -345,6 +555,304 @@ async function handleSignOut(req, res) {
   });
 }
 
+async function handleCreateUploadUrl(req, res) {
+  if (!hasS3Configuration()) {
+    sendJson(res, 500, {
+      success: false,
+      message: "S3 chưa được cấu hình đầy đủ trên máy chủ.",
+    });
+    return;
+  }
+
+  const payload = await readJsonBody(req);
+  const fileName = String(payload.fileName ?? "").trim();
+  const fileType = String(payload.fileType ?? "").trim().toLowerCase();
+
+  if (!fileName || !fileType) {
+    sendJson(res, 400, {
+      success: false,
+      message: "Thiếu fileName hoặc fileType.",
+    });
+    return;
+  }
+
+  if (!allowedUploadContentTypes.has(fileType)) {
+    sendJson(res, 400, {
+      success: false,
+      message: "Định dạng ảnh không hỗ trợ. Chỉ chấp nhận JPG, PNG hoặc WEBP.",
+    });
+    return;
+  }
+
+  const safeFileName = sanitizeFileName(fileName);
+  const dateFolder = new Date().toISOString().slice(0, 10);
+  const objectKey = [
+    s3UploadKeyPrefix,
+    dateFolder,
+    `${randomUUID()}-${safeFileName}`,
+  ]
+    .filter(Boolean)
+    .join("/");
+
+  const uploadUrl = buildPresignedS3PutUrl({
+    objectKey,
+    expiresInSeconds: maxUploadUrlExpiresInSeconds,
+  });
+  const fileUrl = buildS3ObjectUrl(objectKey);
+
+  sendJson(res, 200, {
+    success: true,
+    data: {
+      key: objectKey,
+      uploadUrl,
+      fileUrl,
+      expiresInSeconds: maxUploadUrlExpiresInSeconds,
+    },
+  });
+}
+
+async function handleCreateProductListing(req, res) {
+  const payload = await readJsonBody(req);
+  const token = getTokenFromRequest(req, payload);
+
+  if (!token) {
+    sendJson(res, 401, {
+      success: false,
+      message: "Thiếu token phiên đăng nhập.",
+    });
+    return;
+  }
+
+  const user = await getUserFromSessionToken(token);
+
+  if (!user) {
+    sendJson(res, 401, {
+      success: false,
+      message: "Phiên đăng nhập không hợp lệ hoặc đã hết hạn.",
+    });
+    return;
+  }
+
+  const name = String(payload.name ?? "").trim();
+  const category = String(payload.category ?? "").trim();
+  const condition = String(payload.condition ?? "").trim();
+  const location = String(payload.location ?? "").trim();
+  const description = String(payload.description ?? "").trim();
+  const size = String(payload.size ?? "").trim() || null;
+  const brand = String(payload.brand ?? "").trim() || null;
+  const price = Number(payload.price);
+  const imageUrls = normalizeImageUrls(payload.imageUrls);
+
+  if (!name || !category || !location || !description) {
+    sendJson(res, 400, {
+      success: false,
+      message: "Thiếu thông tin bắt buộc của tin đăng.",
+    });
+    return;
+  }
+
+  if (!validListingConditions.has(condition)) {
+    sendJson(res, 400, {
+      success: false,
+      message: "Tình trạng sản phẩm không hợp lệ.",
+    });
+    return;
+  }
+
+  if (!Number.isFinite(price) || price <= 0) {
+    sendJson(res, 400, {
+      success: false,
+      message: "Giá bán không hợp lệ.",
+    });
+    return;
+  }
+
+  if (imageUrls.length === 0) {
+    sendJson(res, 400, {
+      success: false,
+      message: "Tin đăng cần tối thiểu 1 hình ảnh.",
+    });
+    return;
+  }
+
+  if (imageUrls.length > 10) {
+    sendJson(res, 400, {
+      success: false,
+      message: "Tin đăng tối đa 10 hình ảnh.",
+    });
+    return;
+  }
+
+  const insertRows = await sql`
+    INSERT INTO products (
+      created_by_user_id,
+      name,
+      category,
+      item_condition,
+      price,
+      location,
+      description,
+      size,
+      brand,
+      image_urls
+    )
+    VALUES (
+      ${user.id},
+      ${name},
+      ${category},
+      ${condition},
+      ${Math.round(price)},
+      ${location},
+      ${description},
+      ${size},
+      ${brand},
+      ${JSON.stringify(imageUrls)}::jsonb
+    )
+    RETURNING id, created_at
+  `;
+
+  const listing = insertRows[0];
+
+  sendJson(res, 201, {
+    success: true,
+    message: "Đăng tin thành công.",
+    data: {
+      id: String(listing.id),
+      createdAt: listing.created_at,
+    },
+  });
+}
+
+async function handleGetProducts(req, res) {
+  const rows = await sql`
+    SELECT
+      p.id,
+      p.name,
+      p.price,
+      p.category,
+      p.description,
+      p.item_condition,
+      p.size,
+      p.brand,
+      p.location,
+      p.image_urls,
+      p.views,
+      p.created_at,
+      u.id AS seller_id,
+      u.name AS seller_name,
+      u.email AS seller_email,
+      u.created_at AS seller_joined_date
+    FROM products p
+    JOIN auth_users u ON u.id = p.created_by_user_id
+    ORDER BY p.created_at DESC
+  `;
+
+  sendJson(res, 200, {
+    success: true,
+    data: rows.map(mapProductRow),
+  });
+}
+
+async function handleGetMyProducts(req, res) {
+  const token = getTokenFromRequest(req);
+
+  if (!token) {
+    sendJson(res, 401, {
+      success: false,
+      message: "Thiếu token phiên đăng nhập.",
+    });
+    return;
+  }
+
+  const user = await getUserFromSessionToken(token);
+
+  if (!user) {
+    sendJson(res, 401, {
+      success: false,
+      message: "Phiên đăng nhập không hợp lệ hoặc đã hết hạn.",
+    });
+    return;
+  }
+
+  const rows = await sql`
+    SELECT
+      p.id,
+      p.name,
+      p.price,
+      p.category,
+      p.description,
+      p.item_condition,
+      p.size,
+      p.brand,
+      p.location,
+      p.image_urls,
+      p.views,
+      p.created_at,
+      u.id AS seller_id,
+      u.name AS seller_name,
+      u.email AS seller_email,
+      u.created_at AS seller_joined_date
+    FROM products p
+    JOIN auth_users u ON u.id = p.created_by_user_id
+    WHERE p.created_by_user_id = ${user.id}
+    ORDER BY p.created_at DESC
+  `;
+
+  sendJson(res, 200, {
+    success: true,
+    data: rows.map(mapProductRow),
+  });
+}
+
+async function handleGetProductById(req, res, productId) {
+  if (!/^\d+$/.test(productId)) {
+    sendJson(res, 400, {
+      success: false,
+      message: "Mã sản phẩm không hợp lệ.",
+    });
+    return;
+  }
+
+  const rows = await sql`
+    SELECT
+      p.id,
+      p.name,
+      p.price,
+      p.category,
+      p.description,
+      p.item_condition,
+      p.size,
+      p.brand,
+      p.location,
+      p.image_urls,
+      p.views,
+      p.created_at,
+      u.id AS seller_id,
+      u.name AS seller_name,
+      u.email AS seller_email,
+      u.created_at AS seller_joined_date
+    FROM products p
+    JOIN auth_users u ON u.id = p.created_by_user_id
+    WHERE p.id = ${Number(productId)}
+    LIMIT 1
+  `;
+
+  const product = rows[0];
+
+  if (!product) {
+    sendJson(res, 404, {
+      success: false,
+      message: "Không tìm thấy sản phẩm.",
+    });
+    return;
+  }
+
+  sendJson(res, 200, {
+    success: true,
+    data: mapProductRow(product),
+  });
+}
+
 function buildSystemHealth() {
   const memoryUsage = process.memoryUsage();
 
@@ -471,6 +979,7 @@ async function serveStaticAsset(res, pathName) {
 
 await ensureAuthTables();
 await ensureHealthLogTable();
+await ensureProductsTable();
 
 const server = http.createServer(async (req, res) => {
   const method = req.method ?? "GET";
@@ -503,6 +1012,38 @@ const server = http.createServer(async (req, res) => {
 
     if (method === "GET" && pathName === "/api/auth/me") {
       await handleMe(req, res);
+      return;
+    }
+
+    if (
+      method === "POST" &&
+      (pathName === "/api/uploads" || pathName === "/api/uploads/presign")
+    ) {
+      await handleCreateUploadUrl(req, res);
+      return;
+    }
+
+    if (method === "GET" && pathName === "/api/products/mine") {
+      await handleGetMyProducts(req, res);
+      return;
+    }
+
+    if (method === "GET" && pathName === "/api/products") {
+      await handleGetProducts(req, res);
+      return;
+    }
+
+    if (method === "GET" && pathName.startsWith("/api/products/")) {
+      const productId = pathName.slice("/api/products/".length).trim();
+      await handleGetProductById(req, res, productId);
+      return;
+    }
+
+    if (
+      method === "POST" &&
+      (pathName === "/api/products" || pathName === "/api/listings")
+    ) {
+      await handleCreateProductListing(req, res);
       return;
     }
 

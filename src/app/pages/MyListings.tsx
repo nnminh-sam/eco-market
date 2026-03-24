@@ -1,31 +1,77 @@
-import { useEffect } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";
+import { AUTH_SESSION_TOKEN_STORAGE_KEY, useAuth } from "../context/AuthContext";
 import { useWishlist } from "../context/WishlistContext";
-import { products } from "../data/products";
 import { ProductCard } from "../components/ProductCard";
 import { Button } from "../components/ui/button";
 import { ArrowLeft, Plus, Package, Heart } from "lucide-react";
+import { Product } from "../types/product";
+import { getMyProducts, getProducts } from "../services/marketApi";
 
 export function MyListings() {
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated } = useAuth();
   const { wishlistProductIds } = useWishlist();
   const navigate = useNavigate();
+  const [myProducts, setMyProducts] = useState<Product[]>([]);
+  const [allProducts, setAllProducts] = useState<Product[]>([]);
+  const [isLoadingProducts, setIsLoadingProducts] = useState(true);
 
   useEffect(() => {
     if (!isAuthenticated) {
       navigate("/login");
+      return;
     }
+
+    let isMounted = true;
+
+    const fetchListings = async () => {
+      const sessionToken =
+        typeof window === "undefined"
+          ? null
+          : window.localStorage.getItem(AUTH_SESSION_TOKEN_STORAGE_KEY);
+
+      if (!sessionToken) {
+        if (isMounted) {
+          setMyProducts([]);
+          setAllProducts([]);
+          setIsLoadingProducts(false);
+        }
+        return;
+      }
+
+      setIsLoadingProducts(true);
+      const [myProductsResponse, productsResponse] = await Promise.all([
+        getMyProducts(sessionToken),
+        getProducts(),
+      ]);
+
+      if (!isMounted) {
+        return;
+      }
+
+      setMyProducts(myProductsResponse.data ?? []);
+      setAllProducts(productsResponse.data ?? []);
+      setIsLoadingProducts(false);
+    };
+
+    void fetchListings();
+
+    return () => {
+      isMounted = false;
+    };
   }, [isAuthenticated, navigate]);
 
   if (!isAuthenticated) {
     return null;
   }
 
-  const myProducts = products.filter((p) => p.seller.id === user?.id);
-  const wishlistProducts = wishlistProductIds
-    .map((productId) => products.find((product) => product.id === productId))
-    .filter((product): product is (typeof products)[number] => Boolean(product));
+  const wishlistProducts = useMemo(
+    () =>
+      wishlistProductIds
+        .map((productId) => allProducts.find((product) => product.id === productId))
+        .filter((product): product is Product => Boolean(product)),
+    [allProducts, wishlistProductIds]
+  );
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#f5f5dc]/30 to-white">
@@ -53,7 +99,11 @@ export function MyListings() {
           </div>
         </div>
 
-        {myProducts.length === 0 ? (
+        {isLoadingProducts ? (
+          <div className="text-center py-20 bg-white rounded-3xl border-2 border-dashed border-[#2d6a6a]/30 shadow-lg">
+            <p className="text-2xl text-gray-700 mb-3 font-semibold">Đang tải tin đăng...</p>
+          </div>
+        ) : myProducts.length === 0 ? (
           <div className="text-center py-20 bg-white rounded-3xl border-2 border-dashed border-[#2d6a6a]/30 shadow-lg">
             <div className="text-7xl mb-6">📦</div>
             <p className="text-2xl text-gray-700 mb-3 font-semibold">Bạn chưa có tin đăng nào</p>
