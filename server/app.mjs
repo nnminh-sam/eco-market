@@ -31,15 +31,25 @@ const s3PublicBaseUrl = String(process.env.S3_PUBLIC_BASE_URL ?? "")
   .trim()
   .replace(/\/+$/g, "");
 
-const allowedUploadContentTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
-const validListingConditions = new Set(["Like New", "Very Good", "Good", "Fair"]);
+const allowedUploadContentTypes = new Set([
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+]);
+const validListingConditions = new Set([
+  "Like New",
+  "Very Good",
+  "Good",
+  "Fair",
+]);
 const maxUploadUrlExpiresInSeconds = 300;
+const allowedSignUpEmailDomain = "@st.ueh.edu.vn";
 
-if (!databaseUrl) {
-  throw new Error("Missing DATABASE_URL. Add it to your .env file.");
-}
-
-const sql = neon(databaseUrl);
+const sql = databaseUrl ? neon(databaseUrl) : null;
+const databaseStartupError = databaseUrl
+  ? null
+  : "Missing DATABASE_URL. Add it to your .env file.";
+let databaseInitError = null;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -61,7 +71,47 @@ const contentTypeByExtension = {
   ".woff2": "font/woff2",
 };
 
+function getDatabaseUnavailableReason() {
+  if (databaseStartupError) {
+    return databaseStartupError;
+  }
+
+  if (databaseInitError) {
+    return databaseInitError instanceof Error
+      ? databaseInitError.message
+      : "Database initialization failed.";
+  }
+
+  return null;
+}
+
+function isDatabaseReady() {
+  return Boolean(sql) && !databaseStartupError && !databaseInitError;
+}
+
+async function initializeDatabase() {
+  if (!sql) {
+    console.error(`[startup] ${databaseStartupError}`);
+    return;
+  }
+
+  try {
+    await ensureAuthTables();
+    await ensureHealthLogTable();
+    await ensureProductsTable();
+    databaseInitError = null;
+    console.log("[startup] Database tables are ready.");
+  } catch (error) {
+    databaseInitError = error;
+    console.error("[startup] Database initialization failed:", error);
+  }
+}
+
 async function ensureAuthTables() {
+  if (!sql) {
+    throw new Error("Database is not configured.");
+  }
+
   await sql`
     CREATE TABLE IF NOT EXISTS auth_users (
       id BIGSERIAL PRIMARY KEY,
@@ -83,6 +133,10 @@ async function ensureAuthTables() {
 }
 
 async function ensureHealthLogTable() {
+  if (!sql) {
+    throw new Error("Database is not configured.");
+  }
+
   await sql`
     CREATE TABLE IF NOT EXISTS health_check_logs (
       id BIGSERIAL PRIMARY KEY,
@@ -95,6 +149,10 @@ async function ensureHealthLogTable() {
 }
 
 async function ensureProductsTable() {
+  if (!sql) {
+    throw new Error("Database is not configured.");
+  }
+
   await sql`
     CREATE TABLE IF NOT EXISTS products (
       id BIGSERIAL PRIMARY KEY,
@@ -115,12 +173,15 @@ async function ensureProductsTable() {
 }
 
 function hasS3Configuration() {
-  return Boolean(s3Region && s3BucketName && s3AccessKeyId && s3SecretAccessKey);
+  return Boolean(
+    s3Region && s3BucketName && s3AccessKeyId && s3SecretAccessKey,
+  );
 }
 
 function encodeRfc3986(value) {
-  return encodeURIComponent(value).replace(/[!'()*]/g, (character) =>
-    `%${character.charCodeAt(0).toString(16).toUpperCase()}`
+  return encodeURIComponent(value).replace(
+    /[!'()*]/g,
+    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`,
   );
 }
 
@@ -175,10 +236,7 @@ function sanitizeFileName(fileName) {
     .slice(0, 80);
 }
 
-function buildPresignedS3PutUrl({
-  objectKey,
-  expiresInSeconds,
-}) {
+function buildPresignedS3PutUrl({ objectKey, expiresInSeconds }) {
   const currentTime = new Date();
   const amzDate = toAmzDate(currentTime);
   const dateStamp = amzDate.slice(0, 8);
@@ -195,7 +253,10 @@ function buildPresignedS3PutUrl({
   ];
 
   const canonicalQueryString = canonicalQueryEntries
-    .map(([queryKey, queryValue]) => `${encodeRfc3986(queryKey)}=${encodeRfc3986(queryValue)}`)
+    .map(
+      ([queryKey, queryValue]) =>
+        `${encodeRfc3986(queryKey)}=${encodeRfc3986(queryValue)}`,
+    )
     .join("&");
 
   const canonicalRequest = [
@@ -214,8 +275,15 @@ function buildPresignedS3PutUrl({
     hashSha256Hex(canonicalRequest),
   ].join("\n");
 
-  const signingKey = buildSigningKey(s3SecretAccessKey, dateStamp, s3Region, serviceName);
-  const signature = createHmac("sha256", signingKey).update(stringToSign).digest("hex");
+  const signingKey = buildSigningKey(
+    s3SecretAccessKey,
+    dateStamp,
+    s3Region,
+    serviceName,
+  );
+  const signature = createHmac("sha256", signingKey)
+    .update(stringToSign)
+    .digest("hex");
 
   return `https://${hostName}${canonicalUri}?${canonicalQueryString}&X-Amz-Signature=${signature}`;
 }
@@ -325,7 +393,9 @@ function getTokenFromRequest(req, parsedBody) {
 
 async function createSession(userId) {
   const token = `${randomUUID()}${randomBytes(8).toString("hex")}`;
-  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const expiresAt = new Date(
+    Date.now() + 7 * 24 * 60 * 60 * 1000,
+  ).toISOString();
 
   await sql`
     INSERT INTO auth_sessions (token, user_id, expires_at)
@@ -367,7 +437,10 @@ function normalizeImageUrls(imageUrls) {
 
   return imageUrls
     .map((imageUrl) => String(imageUrl).trim())
-    .filter((imageUrl) => imageUrl.startsWith("http://") || imageUrl.startsWith("https://"));
+    .filter(
+      (imageUrl) =>
+        imageUrl.startsWith("http://") || imageUrl.startsWith("https://"),
+    );
 }
 
 function mapProductRow(productRow) {
@@ -416,6 +489,14 @@ async function handleSignUp(req, res) {
     sendJson(res, 400, {
       success: false,
       message: "Email không hợp lệ.",
+    });
+    return;
+  }
+
+  if (!email.endsWith(allowedSignUpEmailDomain)) {
+    sendJson(res, 400, {
+      success: false,
+      message: "Bạn phải sử dụng email phù hợp để đăng kí",
     });
     return;
   }
@@ -566,7 +647,9 @@ async function handleCreateUploadUrl(req, res) {
 
   const payload = await readJsonBody(req);
   const fileName = String(payload.fileName ?? "").trim();
-  const fileType = String(payload.fileType ?? "").trim().toLowerCase();
+  const fileType = String(payload.fileType ?? "")
+    .trim()
+    .toLowerCase();
 
   if (!fileName || !fileType) {
     sendJson(res, 400, {
@@ -870,6 +953,18 @@ function buildSystemHealth() {
 
 async function buildDatabaseHealth(endpoint, systemHealth) {
   const dbStartedAt = performance.now();
+  const unavailableReason = getDatabaseUnavailableReason();
+
+  if (!isDatabaseReady()) {
+    return {
+      status: "down",
+      latencyMs: Number((performance.now() - dbStartedAt).toFixed(2)),
+      error: unavailableReason ?? "Database is unavailable.",
+      writeCheck: {
+        status: "failed",
+      },
+    };
+  }
 
   try {
     const pingRows = await sql`SELECT NOW() AS db_time`;
@@ -918,7 +1013,8 @@ async function handleHealth(req, res, pathName) {
   const startedAt = performance.now();
   const systemHealth = buildSystemHealth();
   const databaseHealth = await buildDatabaseHealth(pathName, systemHealth);
-  const isHealthy = systemHealth.status === "up" && databaseHealth.status === "up";
+  const isHealthy =
+    systemHealth.status === "up" && databaseHealth.status === "up";
 
   sendJson(res, isHealthy ? 200 : 503, {
     status: isHealthy ? "ok" : "degraded",
@@ -971,23 +1067,37 @@ async function serveStaticAsset(res, pathName) {
         res,
         500,
         "dist/index.html not found. Run npm run build first.",
-        "text/plain; charset=utf-8"
+        "text/plain; charset=utf-8",
       );
     }
   }
 }
 
-await ensureAuthTables();
-await ensureHealthLogTable();
-await ensureProductsTable();
+await initializeDatabase();
 
 const server = http.createServer(async (req, res) => {
   const method = req.method ?? "GET";
-  const requestUrl = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+  const requestUrl = new URL(
+    req.url ?? "/",
+    `http://${req.headers.host ?? "localhost"}`,
+  );
   const pathName = requestUrl.pathname;
 
   if (method === "OPTIONS") {
     sendJson(res, 204, {});
+    return;
+  }
+
+  if (
+    pathName.startsWith("/api/") &&
+    pathName !== "/api/health" &&
+    !isDatabaseReady()
+  ) {
+    sendJson(res, 503, {
+      success: false,
+      message: "Dịch vụ tạm thời không khả dụng. Vui lòng thử lại sau.",
+      error: getDatabaseUnavailableReason(),
+    });
     return;
   }
 
@@ -997,7 +1107,10 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    if (method === "POST" && (pathName === "/api/auth/sign-in" || pathName === "/api/auth/login")) {
+    if (
+      method === "POST" &&
+      (pathName === "/api/auth/sign-in" || pathName === "/api/auth/login")
+    ) {
       await handleLogin(req, res);
       return;
     }

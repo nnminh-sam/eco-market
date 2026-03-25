@@ -13,6 +13,13 @@ import {
 import { Recycle, Sparkles, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
 
+const allowedSignUpEmailDomain = "@st.ueh.edu.vn";
+const invalidSignUpEmailMessage = "Bạn phải sử dụng email phù hợp để đăng kí";
+
+function hasAllowedSignUpEmail(email: string) {
+  return email.trim().toLowerCase().endsWith(allowedSignUpEmailDomain);
+}
+
 export function Login() {
   const [isSignUpMode, setIsSignUpMode] = useState(false);
   const [email, setEmail] = useState("");
@@ -24,6 +31,11 @@ export function Login() {
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
+
+    if (isSignUpMode && !hasAllowedSignUpEmail(email)) {
+      toast.error(invalidSignUpEmailMessage);
+      return;
+    }
 
     if (isSignUpMode && password !== confirmPassword) {
       toast.error("Mật khẩu xác nhận không khớp.");
