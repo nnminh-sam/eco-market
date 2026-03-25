@@ -1076,13 +1076,17 @@ async function serveStaticAsset(res, pathName) {
 await initializeDatabase();
 
 export async function requestHandler(req, res, options = {}) {
-  const { serveStatic = true } = options;
+  const { serveStatic = true, pathNameOverride = null } = options;
   const method = req.method ?? "GET";
   const requestUrl = new URL(
     req.url ?? "/",
     `http://${req.headers.host ?? "localhost"}`,
   );
-  const pathName = requestUrl.pathname;
+  const rawPathName = pathNameOverride ?? requestUrl.pathname;
+  const pathName =
+    !serveStatic && !rawPathName.startsWith("/api/")
+      ? `/api${rawPathName === "/" ? "" : rawPathName}`
+      : rawPathName;
 
   if (method === "OPTIONS") {
     sendJson(res, 204, {});
