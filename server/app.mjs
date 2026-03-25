@@ -1075,7 +1075,8 @@ async function serveStaticAsset(res, pathName) {
 
 await initializeDatabase();
 
-const server = http.createServer(async (req, res) => {
+export async function requestHandler(req, res, options = {}) {
+  const { serveStatic = true } = options;
   const method = req.method ?? "GET";
   const requestUrl = new URL(
     req.url ?? "/",
@@ -1173,6 +1174,14 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
+    if (!serveStatic) {
+      sendJson(res, 404, {
+        success: false,
+        message: "Endpoint không tồn tại.",
+      });
+      return;
+    }
+
     await serveStaticAsset(res, pathName);
   } catch (error) {
     sendJson(res, 500, {
@@ -1180,8 +1189,17 @@ const server = http.createServer(async (req, res) => {
       message: error instanceof Error ? error.message : "Internal server error",
     });
   }
-});
+}
 
-server.listen(port, host, () => {
-  console.log(`App server running at http://${host}:${port}`);
-});
+const isRunAsEntry =
+  process.argv[1] && path.resolve(process.argv[1]) === __filename;
+
+if (isRunAsEntry) {
+  const server = http.createServer((req, res) => {
+    void requestHandler(req, res);
+  });
+
+  server.listen(port, host, () => {
+    console.log(`App server running at http://${host}:${port}`);
+  });
+}
