@@ -127,6 +127,36 @@ export async function createProductListing(payload: CreateListingPayload, sessio
   }
 }
 
+export async function updateProductListing(productId: string, payload: CreateListingPayload, sessionToken: string) {
+  try {
+    const response = await requestJson<Product>(`/api/products/${productId}`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${sessionToken}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok || !response.data.success) {
+      return {
+        success: false,
+        message: response.data.message ?? "Không thể cập nhật tin đăng lúc này.",
+      };
+    }
+
+    return {
+      success: true,
+      message: response.data.message ?? "Cập nhật tin đăng thành công.",
+      data: response.data.data,
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: readErrorMessage(error, "Không thể kết nối đến máy chủ."),
+    };
+  }
+}
+
 export async function getProducts() {
   try {
     const response = await requestJson<Product[]>("/api/products", {

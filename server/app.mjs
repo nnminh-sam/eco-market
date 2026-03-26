@@ -948,6 +948,162 @@ async function handleGetProductById(req, res, productId) {
   });
 }
 
+async function handleUpdateProductListing(req, res, productId) {
+  const payload = await readJsonBody(req);
+  const token = getTokenFromRequest(req, payload);
+
+  if (!token) {
+    sendJson(res, 401, {
+      success: false,
+      message: "Thiếu token phiên đăng nhập.",
+    });
+    return;
+  }
+
+  const user = await getUserFromSessionToken(token);
+
+  if (!user) {
+    sendJson(res, 401, {
+      success: false,
+      message: "Phiên đăng nhập không hợp lệ hoặc đã hết hạn.",
+    });
+    return;
+  }
+
+  if (!/^\d+$/.test(productId)) {
+    sendJson(res, 400, {
+      success: false,
+      message: "Mã sản phẩm không hợp lệ.",
+    });
+    return;
+  }
+
+  const numericProductId = Number(productId);
+  const existingRows = await sql`
+    SELECT id, created_by_user_id, status
+    FROM products
+    WHERE id = ${numericProductId}
+    LIMIT 1
+  `;
+  const existingProduct = existingRows[0];
+
+  if (!existingProduct) {
+    sendJson(res, 404, {
+      success: false,
+      message: "Không tìm thấy sản phẩm.",
+    });
+    return;
+  }
+
+  if (existingProduct.created_by_user_id !== user.id) {
+    sendJson(res, 403, {
+      success: false,
+      message: "Bạn không có quyền thực hiện thao tác này.",
+    });
+    return;
+  }
+
+  if (existingProduct.status !== "available") {
+    sendJson(res, 400, {
+      success: false,
+      message: "Chỉ có thể chỉnh sửa tin đăng chưa bán.",
+    });
+    return;
+  }
+
+  const name = String(payload.name ?? "").trim();
+  const category = String(payload.category ?? "").trim();
+  const condition = String(payload.condition ?? "").trim();
+  const location = String(payload.location ?? "").trim();
+  const description = String(payload.description ?? "").trim();
+  const size = String(payload.size ?? "").trim() || null;
+  const brand = String(payload.brand ?? "").trim() || null;
+  const price = Number(payload.price);
+  const imageUrls = normalizeImageUrls(payload.imageUrls);
+
+  if (!name || !category || !location || !description) {
+    sendJson(res, 400, {
+      success: false,
+      message: "Thiếu thông tin bắt buộc của tin đăng.",
+    });
+    return;
+  }
+
+  if (!validListingConditions.has(condition)) {
+    sendJson(res, 400, {
+      success: false,
+      message: "Tình trạng sản phẩm không hợp lệ.",
+    });
+    return;
+  }
+
+  if (!Number.isFinite(price) || price <= 0) {
+    sendJson(res, 400, {
+      success: false,
+      message: "Giá bán không hợp lệ.",
+    });
+    return;
+  }
+
+  if (imageUrls.length === 0) {
+    sendJson(res, 400, {
+      success: false,
+      message: "Tin đăng cần tối thiểu 1 hình ảnh.",
+    });
+    return;
+  }
+
+  if (imageUrls.length > 10) {
+    sendJson(res, 400, {
+      success: false,
+      message: "Tin đăng tối đa 10 hình ảnh.",
+    });
+    return;
+  }
+
+  const updatedRows = await sql`
+    UPDATE products
+    SET
+      name = ${name},
+      category = ${category},
+      item_condition = ${condition},
+      price = ${Math.round(price)},
+      location = ${location},
+      description = ${description},
+      size = ${size},
+      brand = ${brand},
+      image_urls = ${JSON.stringify(imageUrls)}::jsonb
+    WHERE id = ${numericProductId}
+    RETURNING
+      id,
+      name,
+      price,
+      category,
+      description,
+      item_condition,
+      size,
+      brand,
+      location,
+      image_urls,
+      views,
+      status,
+      created_at
+  `;
+  const updatedProduct = updatedRows[0];
+
+  sendJson(res, 200, {
+    success: true,
+    message: "Cập nhật tin đăng thành công.",
+    data: mapProductRow({
+      ...updatedProduct,
+      seller_id: user.id,
+      seller_name: user.name,
+      seller_email: user.email,
+      seller_joined_date: user.joined_date,
+    }),
+  });
+}
+
 async function handleMarkProductAsSold(req, res, productId) {
   const token = getTokenFromRequest(req);
 
@@ -1247,6 +1403,13 @@ export async function requestHandler(req, res, options = {}) {
       if (parts.length === 5 && parts[4] === "sold") {
         const productId = parts[3];
         await handleMarkProductAsSold(req, res, productId);
+        return;
+      }
+
+      // /api/products/:id
+      if (parts.length === 4 && /^\d+$/.test(parts[3])) {
+        const productId = parts[3];
+        await handleUpdateProductListing(req, res, productId);
         return;
       }
     }
