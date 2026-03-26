@@ -10,8 +10,9 @@ import {
   CardHeader,
   CardDescription,
 } from "../components/ui/card";
-import { Recycle, Sparkles, ArrowRight } from "lucide-react";
+import { Sparkles, ArrowRight } from "lucide-react";
 import { toast } from "sonner";
+import logoUrl from "../../assets/logo.png";
 
 const allowedSignUpEmailDomain = "@st.ueh.edu.vn";
 const invalidSignUpEmailMessage = "Bạn phải sử dụng email phù hợp để đăng kí";
@@ -74,9 +75,13 @@ export function Login() {
         <CardHeader className="text-center pt-8 pb-6">
           <div className="flex justify-center mb-6">
             <div className="relative">
-              <div className="absolute inset-0 bg-gradient-to-r from-[#2d6a6a] to-[#ff7b3d] rounded-3xl blur-lg animate-pulse"></div>
-              <div className="relative bg-gradient-to-br from-[#2d6a6a] to-[#2d6a6a]/80 p-5 rounded-3xl shadow-2xl">
-                <Recycle className="size-16 text-white" />
+              <div className="absolute inset-0 bg-gradient-to-r from-[#2d6a6a] to-[#ff7b3d] rounded-3xl blur-lg animate-pulse opacity-40"></div>
+              <div className="relative bg-white/20  rounded-3xl shadow-xl backdrop-blur-md border border-white/10 group hover:scale-105 transition-transform duration-500">
+                <img 
+                  src={logoUrl} 
+                  alt="EcoMarket Logo" 
+                  className="size-28 object-contain drop-shadow-2xl brightness-110"
+                />
               </div>
             </div>
           </div>
@@ -97,19 +102,19 @@ export function Login() {
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="space-y-2">
               <Label htmlFor="email" className="text-[#2f3e46]">
-                Tên tài khoản (Tiền tố Email)
+                Email
               </Label>
-              <div className="flex">
+              <div className="flex items-center h-12 border-2 border-[#2d6a6a]/20 rounded-xl focus-within:border-[#2d6a6a] focus-within:ring-4 focus-within:ring-[#2d6a6a]/10 transition-all bg-white/50 backdrop-blur-sm overflow-hidden group">
                 <Input
                   id="email"
                   type="text"
-                  placeholder="nguyenvana"
+                  placeholder="example"
                   value={email}
                   onChange={(e) => setEmail(e.target.value.replace(/@.*$/, ""))}
                   required
-                  className="h-12 rounded-r-none rounded-l-xl border-2 border-r-0 border-[#2d6a6a]/20 focus:border-[#2d6a6a] transition-all flex-1"
+                  className="h-full border-0 focus-visible:ring-0 focus-visible:ring-offset-0 bg-transparent flex-1 px-4 text-base placeholder:text-gray-400"
                 />
-                <div className="h-12 px-3 sm:px-4 flex items-center bg-gray-50 border-2 border-l-0 border-[#2d6a6a]/20 rounded-r-xl text-gray-500 font-medium text-sm sm:text-base">
+                <div className="h-full px-4 flex items-center bg-gray-50/80 border-l border-[#2d6a6a]/10 text-[#2d6a6a]/60 font-semibold text-sm sm:text-base whitespace-nowrap select-none">
                   @st.ueh.edu.vn
                 </div>
               </div>
@@ -121,11 +126,11 @@ export function Login() {
               <Input
                 id="password"
                 type="password"
-                placeholder="••••••••"
+                placeholder="Password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                className="h-12 rounded-xl border-2 border-[#2d6a6a]/20 focus:border-[#2d6a6a] transition-all"
+                className="h-12 rounded-xl border-2 border-[#2d6a6a]/20 focus:border-[#2d6a6a] focus-visible:ring-4 focus-visible:ring-[#2d6a6a]/10 transition-all"
               />
             </div>
             {isSignUpMode && (

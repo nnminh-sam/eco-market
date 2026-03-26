@@ -89,7 +89,7 @@ export function Home() {
               </div>
               <h1 className="text-6xl mb-5 font-bold">EcoMarket 🌿</h1>
               <p className="text-2xl opacity-95 max-w-2xl mx-auto leading-relaxed">
-                Sàn giao dịch quần áo, phụ kiện second-hand uy tín
+                Sàn giao dịch second-hand uy tín tại UEH
               </p>
               <p className="text-lg opacity-80 mt-3">
                 Mua bán dễ dàng - Giá cả hợp lý - Thân thiện môi trường
