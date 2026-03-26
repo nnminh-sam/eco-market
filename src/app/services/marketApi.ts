@@ -154,6 +154,34 @@ export async function getProducts() {
   }
 }
 
+export async function markProductAsSold(productId: string, sessionToken: string) {
+  try {
+    const response = await requestJson<void>(`/api/products/${productId}/sold`, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${sessionToken}`,
+      },
+    });
+
+    if (!response.ok || !response.data.success) {
+      return {
+        success: false,
+        message: response.data.message ?? "Không thể đánh dấu sản phẩm là đã bán.",
+      };
+    }
+
+    return {
+      success: true,
+      message: response.data.message ?? "Đã đánh dấu sản phẩm là đã bán.",
+    };
+  } catch (error) {
+    return {
+      success: false,
+      message: readErrorMessage(error, "Không thể kết nối đến máy chủ."),
+    };
+  }
+}
+
 export async function getProductById(productId: string) {
   try {
     const response = await requestJson<Product>(`/api/products/${productId}`, {

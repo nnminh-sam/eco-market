@@ -22,6 +22,7 @@ export interface Product {
   seller: User;
   postedDate: string;
   views: number;
+  status: "available" | "sold";
 }
 
 export interface Message {

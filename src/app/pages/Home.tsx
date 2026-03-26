@@ -109,21 +109,6 @@ export function Home() {
               </Button>
             </div>
 
-            {/* Quick Stats */}
-            <div className="grid grid-cols-3 gap-6 max-w-3xl mx-auto mt-12">
-              <div className="text-center p-4 bg-white/10 backdrop-blur-sm rounded-2xl">
-                <p className="text-3xl font-bold">1000+</p>
-                <p className="text-sm opacity-90">Sản phẩm</p>
-              </div>
-              <div className="text-center p-4 bg-white/10 backdrop-blur-sm rounded-2xl">
-                <p className="text-3xl font-bold">500+</p>
-                <p className="text-sm opacity-90">Người dùng</p>
-              </div>
-              <div className="text-center p-4 bg-white/10 backdrop-blur-sm rounded-2xl">
-                <p className="text-3xl font-bold">98%</p>
-                <p className="text-sm opacity-90">Hài lòng</p>
-              </div>
-            </div>
           </div>
         </div>
       </div>

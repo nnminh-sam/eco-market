@@ -32,7 +32,9 @@ export function Login() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
 
-    if (isSignUpMode && !hasAllowedSignUpEmail(email)) {
+    const fullEmail = `${email}@st.ueh.edu.vn`;
+
+    if (isSignUpMode && !hasAllowedSignUpEmail(fullEmail)) {
       toast.error(invalidSignUpEmailMessage);
       return;
     }
@@ -44,8 +46,8 @@ export function Login() {
 
     setIsSubmitting(true);
     const result = isSignUpMode
-      ? await signup(email, password)
-      : await login(email, password);
+      ? await signup(fullEmail, password)
+      : await login(fullEmail, password);
     setIsSubmitting(false);
 
     if (result.success) {
@@ -95,17 +97,22 @@ export function Login() {
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="space-y-2">
               <Label htmlFor="email" className="text-[#2f3e46]">
-                Email
+                Tên tài khoản (Tiền tố Email)
               </Label>
-              <Input
-                id="email"
-                type="email"
-                placeholder="nguyenvana@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-                className="h-12 rounded-xl border-2 border-[#2d6a6a]/20 focus:border-[#2d6a6a] transition-all"
-              />
+              <div className="flex">
+                <Input
+                  id="email"
+                  type="text"
+                  placeholder="nguyenvana"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value.replace(/@.*$/, ""))}
+                  required
+                  className="h-12 rounded-r-none rounded-l-xl border-2 border-r-0 border-[#2d6a6a]/20 focus:border-[#2d6a6a] transition-all flex-1"
+                />
+                <div className="h-12 px-3 sm:px-4 flex items-center bg-gray-50 border-2 border-l-0 border-[#2d6a6a]/20 rounded-r-xl text-gray-500 font-medium text-sm sm:text-base">
+                  @st.ueh.edu.vn
+                </div>
+              </div>
             </div>
             <div className="space-y-2">
               <Label htmlFor="password" className="text-[#2f3e46]">

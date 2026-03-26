@@ -13,6 +13,7 @@ import { useCart } from "../context/CartContext";
 import { useMessages } from "../context/MessageContext";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
+import logoUrl from "../../assets/logo.png";
 
 export function Header() {
   const { logout, isAuthenticated } = useAuth();
@@ -25,11 +26,12 @@ export function Header() {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-20">
           <Link to="/" className="flex items-center gap-3 group">
-            <div className="relative">
-              <div className="absolute inset-0 bg-gradient-to-r from-[#2d6a6a] to-[#ff7b3d] rounded-2xl blur-sm group-hover:blur-md transition-all"></div>
-              <div className="relative bg-gradient-to-br from-[#2d6a6a] to-[#2d6a6a]/80 p-3 rounded-2xl shadow-lg transform group-hover:scale-110 transition-transform">
-                <Recycle className="size-7 text-white" />
-              </div>
+            <div className="relative transform group-hover:scale-105 transition-transform flex items-center justify-center">
+              <img 
+                src={logoUrl} 
+                alt="EcoMarket Logo" 
+                className="h-12 w-auto object-contain drop-shadow-md"
+              />
             </div>
             <div className="flex flex-col">
               <span className="text-3xl font-bold bg-gradient-to-r from-[#2d6a6a] via-[#2d6a6a] to-[#ff7b3d] bg-clip-text text-transparent">

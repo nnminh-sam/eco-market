@@ -16,49 +16,37 @@ export function MyListings() {
   const [allProducts, setAllProducts] = useState<Product[]>([]);
   const [isLoadingProducts, setIsLoadingProducts] = useState(true);
 
+  const fetchListings = async () => {
+    const sessionToken =
+      typeof window === "undefined"
+        ? null
+        : window.localStorage.getItem(AUTH_SESSION_TOKEN_STORAGE_KEY);
+
+    if (!sessionToken) {
+      setMyProducts([]);
+      setAllProducts([]);
+      setIsLoadingProducts(false);
+      return;
+    }
+
+    setIsLoadingProducts(true);
+    const [myProductsResponse, productsResponse] = await Promise.all([
+      getMyProducts(sessionToken),
+      getProducts(),
+    ]);
+
+    setMyProducts(myProductsResponse.data ?? []);
+    setAllProducts(productsResponse.data ?? []);
+    setIsLoadingProducts(false);
+  };
+
   useEffect(() => {
     if (!isAuthenticated) {
       navigate("/login");
       return;
     }
 
-    let isMounted = true;
-
-    const fetchListings = async () => {
-      const sessionToken =
-        typeof window === "undefined"
-          ? null
-          : window.localStorage.getItem(AUTH_SESSION_TOKEN_STORAGE_KEY);
-
-      if (!sessionToken) {
-        if (isMounted) {
-          setMyProducts([]);
-          setAllProducts([]);
-          setIsLoadingProducts(false);
-        }
-        return;
-      }
-
-      setIsLoadingProducts(true);
-      const [myProductsResponse, productsResponse] = await Promise.all([
-        getMyProducts(sessionToken),
-        getProducts(),
-      ]);
-
-      if (!isMounted) {
-        return;
-      }
-
-      setMyProducts(myProductsResponse.data ?? []);
-      setAllProducts(productsResponse.data ?? []);
-      setIsLoadingProducts(false);
-    };
-
     void fetchListings();
-
-    return () => {
-      isMounted = false;
-    };
   }, [isAuthenticated, navigate]);
 
   if (!isAuthenticated) {
@@ -128,7 +116,12 @@ export function MyListings() {
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8">
               {myProducts.map((product) => (
-                <ProductCard key={product.id} product={product} />
+                <ProductCard 
+                  key={product.id} 
+                  product={product} 
+                  isOwnerView={true}
+                  onStatusChange={fetchListings}
+                />
               ))}
             </div>
           </>

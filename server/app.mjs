@@ -167,9 +167,16 @@ async function ensureProductsTable() {
       brand TEXT,
       image_urls JSONB NOT NULL DEFAULT '[]'::jsonb,
       views BIGINT NOT NULL DEFAULT 0,
+      status TEXT NOT NULL DEFAULT 'available',
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `;
+
+  try {
+    await sql`ALTER TABLE products ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'available'`;
+  } catch (error) {
+    console.warn("[startup] Could not add status column (might already exist):", error.message);
+  }
 }
 
 function hasS3Configuration() {
@@ -364,7 +371,7 @@ function sendJson(res, statusCode, payload) {
   res.writeHead(statusCode, {
     "Access-Control-Allow-Origin": corsOrigin,
     "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
   });
@@ -468,6 +475,7 @@ function mapProductRow(productRow) {
     },
     postedDate: productRow.created_at,
     views: Number(productRow.views ?? 0),
+    status: productRow.status ?? "available",
   };
 }
 
@@ -820,6 +828,7 @@ async function handleGetProducts(req, res) {
       p.location,
       p.image_urls,
       p.views,
+      p.status,
       p.created_at,
       u.id AS seller_id,
       u.name AS seller_name,
@@ -827,6 +836,7 @@ async function handleGetProducts(req, res) {
       u.created_at AS seller_joined_date
     FROM products p
     JOIN auth_users u ON u.id = p.created_by_user_id
+    WHERE p.status = 'available'
     ORDER BY p.created_at DESC
   `;
 
@@ -870,6 +880,7 @@ async function handleGetMyProducts(req, res) {
       p.location,
       p.image_urls,
       p.views,
+      p.status,
       p.created_at,
       u.id AS seller_id,
       u.name AS seller_name,
@@ -909,6 +920,7 @@ async function handleGetProductById(req, res, productId) {
       p.location,
       p.image_urls,
       p.views,
+      p.status,
       p.created_at,
       u.id AS seller_id,
       u.name AS seller_name,
@@ -933,6 +945,76 @@ async function handleGetProductById(req, res, productId) {
   sendJson(res, 200, {
     success: true,
     data: mapProductRow(product),
+  });
+}
+
+async function handleMarkProductAsSold(req, res, productId) {
+  const token = getTokenFromRequest(req);
+
+  if (!token) {
+    sendJson(res, 401, {
+      success: false,
+      message: "Thiếu token phiên đăng nhập.",
+    });
+    return;
+  }
+
+  const user = await getUserFromSessionToken(token);
+
+  if (!user) {
+    sendJson(res, 401, {
+      success: false,
+      message: "Phiên đăng nhập không hợp lệ hoặc đã hết hạn.",
+    });
+    return;
+  }
+
+  if (!/^\d+$/.test(productId)) {
+    sendJson(res, 400, {
+      success: false,
+      message: "Mã sản phẩm không hợp lệ.",
+    });
+    return;
+  }
+
+  const numericProductId = Number(productId);
+
+  const rows = await sql`
+    SELECT id, created_by_user_id
+    FROM products
+    WHERE id = ${numericProductId}
+    LIMIT 1
+  `;
+
+  const product = rows[0];
+
+  if (!product) {
+    sendJson(res, 404, {
+      success: false,
+      message: "Không tìm thấy sản phẩm.",
+    });
+    return;
+  }
+
+  if (product.created_by_user_id !== user.id) {
+    sendJson(res, 403, {
+      success: false,
+      message: "Bạn không có quyền thực hiện thao tác này.",
+    });
+    return;
+  }
+
+  const updated = await sql`
+    UPDATE products
+    SET status = 'sold'
+    WHERE id = ${numericProductId}
+    RETURNING id, status
+  `;
+
+  sendJson(res, 200, {
+    success: true,
+    message: "Đã đánh dấu sản phẩm là đã bán.",
+    data: updated[0],
   });
 }
 
@@ -1153,8 +1235,20 @@ export async function requestHandler(req, res, options = {}) {
 
     if (method === "GET" && pathName.startsWith("/api/products/")) {
       const productId = pathName.slice("/api/products/".length).trim();
-      await handleGetProductById(req, res, productId);
-      return;
+      if (/^\d+$/.test(productId)) {
+        await handleGetProductById(req, res, productId);
+        return;
+      }
+    }
+
+    if (method === "PATCH" && pathName.startsWith("/api/products/")) {
+      const parts = pathName.split("/");
+      // /api/products/:id/sold
+      if (parts.length === 5 && parts[4] === "sold") {
+        const productId = parts[3];
+        await handleMarkProductAsSold(req, res, productId);
+        return;
+      }
     }
 
     if (

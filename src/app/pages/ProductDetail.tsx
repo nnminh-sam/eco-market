@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { MapPin, Eye, Calendar, MessageCircle, ArrowLeft, User, Phone, Share2, Heart, ShoppingCart } from "lucide-react";
+import { MapPin, Eye, Calendar, MessageCircle, ArrowLeft, User, Phone, Share2, Heart, ShoppingCart, CheckCircle } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Card, CardContent } from "../components/ui/card";
 import { Badge } from "../components/ui/badge";
@@ -8,13 +8,14 @@ import { useAuth } from "../context/AuthContext";
 import { useCart } from "../context/CartContext";
 import { toast } from "sonner";
 import { Product } from "../types/product";
-import { getProductById } from "../services/marketApi";
+import { getProductById, markProductAsSold } from "../services/marketApi";
+import { AUTH_SESSION_TOKEN_STORAGE_KEY } from "../context/AuthContext";
 
 export function ProductDetail() {
   const params = useParams<{ id: string }>();
   const navigate = useNavigate();
   const id = params?.id;
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated, user } = useAuth();
   const { addToCart, getItemQuantity } = useCart();
   const [product, setProduct] = useState<Product | null>(null);
   const [isLoadingProduct, setIsLoadingProduct] = useState(true);
@@ -98,6 +99,27 @@ export function ProductDetail() {
     addToCart(product, 1);
     toast.success("Đã thêm sản phẩm vào giỏ hàng 🛒");
   };
+  
+  const handleMarkAsSold = async () => {
+    const sessionToken = window.localStorage.getItem(AUTH_SESSION_TOKEN_STORAGE_KEY);
+    if (!sessionToken) {
+      toast.error("Vui lòng đăng nhập lại.");
+      navigate("/login");
+      return;
+    }
+
+    const confirmed = window.confirm("Bạn có chắc chắn muốn đánh dấu sản phẩm này là đã bán? Thao tác này sẽ gỡ sản phẩm khỏi danh sách công khai.");
+    if (!confirmed) return;
+
+    const result = await markProductAsSold(product.id, sessionToken);
+
+    if (result.success) {
+      toast.success("Chúc mừng bạn đã bán được hàng! 🎉");
+      setProduct({ ...product, status: "sold" });
+    } else {
+      toast.error(result.message ?? "Không thể thực hiện thao tác này.");
+    }
+  };
 
   const cartQuantity = getItemQuantity(product.id);
 
@@ -144,6 +166,11 @@ export function ProductDetail() {
                     <Badge className="mb-4 bg-[#ff7b3d] text-white shadow-md rounded-full px-4 py-1.5 text-sm font-semibold">
                       {product.condition}
                     </Badge>
+                    {product.status === "sold" && (
+                      <Badge className="ml-2 mb-4 bg-gray-500 text-white shadow-md rounded-full px-4 py-1.5 text-sm font-semibold">
+                        Đã bán
+                      </Badge>
+                    )}
                     <h1 className="text-4xl mb-4 text-[#2f3e46]">{product.name}</h1>
                     <p className="text-5xl font-bold text-[#2d6a6a]">{formatPrice(product.price)}</p>
                   </div>
@@ -210,23 +237,37 @@ export function ProductDetail() {
                   )}
                 </div>
                 <CardContent className="p-6">
-                  <Button
-                    onClick={handleAddToCart}
-                    variant="outline"
-                    className="w-full gap-3 h-14 border-2 border-[#2d6a6a] text-[#2d6a6a] hover:bg-[#2d6a6a] hover:text-white rounded-2xl font-semibold text-lg mb-3"
-                  >
-                    <ShoppingCart className="size-5" />
-                    {cartQuantity > 0
-                      ? `Đã có ${cartQuantity} trong giỏ`
-                      : "Thêm vào giỏ hàng"}
-                  </Button>
-                  <Button
-                    onClick={handleContactSeller}
-                    className="w-full gap-3 h-14 bg-[#ff7b3d] hover:bg-[#ff7b3d]/90 text-white shadow-lg hover:shadow-xl rounded-2xl font-semibold text-lg transition-all transform hover:-translate-y-0.5"
-                  >
-                    <MessageCircle className="size-5" />
-                    Nhắn tin cho người bán
-                  </Button>
+                  {product.status !== "sold" && (
+                    <>
+                      <Button
+                        onClick={handleAddToCart}
+                        variant="outline"
+                        className="w-full gap-3 h-14 border-2 border-[#2d6a6a] text-[#2d6a6a] hover:bg-[#2d6a6a] hover:text-white rounded-2xl font-semibold text-lg mb-3"
+                      >
+                        <ShoppingCart className="size-5" />
+                        {cartQuantity > 0
+                          ? `Đã có ${cartQuantity} trong giỏ`
+                          : "Thêm vào giỏ hàng"}
+                      </Button>
+                      <Button
+                        onClick={handleContactSeller}
+                        className="w-full gap-3 h-14 bg-[#ff7b3d] hover:bg-[#ff7b3d]/90 text-white shadow-lg hover:shadow-xl rounded-2xl font-semibold text-lg transition-all transform hover:-translate-y-0.5"
+                      >
+                        <MessageCircle className="size-5" />
+                        Nhắn tin cho người bán
+                      </Button>
+                    </>
+                  )}
+                  
+                  {isAuthenticated && user?.id === product.seller.id && product.status === "available" && (
+                    <Button
+                      onClick={handleMarkAsSold}
+                      className="w-full gap-3 h-14 bg-[#2d6a6a] hover:bg-[#2d6a6a]/90 text-white shadow-lg hover:shadow-xl rounded-2xl font-semibold text-lg mt-3 transition-all transform hover:-translate-y-0.5"
+                    >
+                      <CheckCircle className="size-5" />
+                      Đánh dấu đã bán
+                    </Button>
+                  )}
                 </CardContent>
               </Card>
 

@@ -25,6 +25,7 @@ export function PostAd() {
     brand: "",
     location: "",
     description: "",
+    otherCategory: "",
   });
   const [imageUrls, setImageUrls] = useState<string[]>([]);
   const [isUploadingImages, setIsUploadingImages] = useState(false);
@@ -81,6 +82,7 @@ export function PostAd() {
     const result = await createProductListing(
       {
         ...formData,
+        category: formData.category === "Khác" ? formData.otherCategory : formData.category,
         price: numericPrice,
         condition: formData.condition as "Like New" | "Very Good" | "Good" | "Fair",
         imageUrls,
@@ -256,6 +258,20 @@ export function PostAd() {
                     </SelectContent>
                   </Select>
                 </div>
+
+                {formData.category === "Khác" && (
+                  <div className="space-y-3">
+                    <Label htmlFor="otherCategory" className="text-lg text-[#2f3e46]">Tên danh mục khác *</Label>
+                    <Input
+                      id="otherCategory"
+                      placeholder="VD: Đồ gia dụng, Sách..."
+                      value={formData.otherCategory}
+                      onChange={(e) => handleChange("otherCategory", e.target.value)}
+                      required
+                      className="h-14 rounded-xl border-2 border-[#2d6a6a]/20 focus:border-[#2d6a6a] text-lg"
+                    />
+                  </div>
+                )}
 
                 <div className="space-y-3">
                   <Label htmlFor="condition" className="text-lg text-[#2f3e46]">Tình trạng *</Label>

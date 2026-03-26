@@ -9,12 +9,17 @@ import { useAuth } from "../context/AuthContext";
 import { useCart } from "../context/CartContext";
 import { useWishlist } from "../context/WishlistContext";
 import { toast } from "sonner";
+import { markProductAsSold } from "../services/marketApi";
+import { AUTH_SESSION_TOKEN_STORAGE_KEY } from "../context/AuthContext";
+import { CheckCircle } from "lucide-react";
 
 interface ProductCardProps {
   product: Product;
+  isOwnerView?: boolean;
+  onStatusChange?: () => void;
 }
 
-export function ProductCard({ product }: ProductCardProps) {
+export function ProductCard({ product, isOwnerView, onStatusChange }: ProductCardProps) {
   const [isHovered, setIsHovered] = useState(false);
   const navigate = useNavigate();
   const { isAuthenticated } = useAuth();
@@ -61,6 +66,32 @@ export function ProductCard({ product }: ProductCardProps) {
         : "Đã xóa khỏi danh sách yêu thích"
     );
   };
+  
+  const handleMarkAsSold = async (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const sessionToken = window.localStorage.getItem(AUTH_SESSION_TOKEN_STORAGE_KEY);
+    if (!sessionToken) {
+      toast.error("Vui lòng đăng nhập lại.");
+      navigate("/login");
+      return;
+    }
+
+    const confirmed = window.confirm("Bạn có chắc chắn muốn đánh dấu sản phẩm này là đã bán? Thao tác này sẽ gỡ sản phẩm khỏi danh sách công khai.");
+    if (!confirmed) return;
+
+    const result = await markProductAsSold(product.id, sessionToken);
+
+    if (result.success) {
+      toast.success("Chúc mừng bạn đã bán được hàng! 🎉");
+      if (onStatusChange) {
+        onStatusChange();
+      }
+    } else {
+      toast.error(result.message ?? "Không thể thực hiện thao tác này.");
+    }
+  };
 
   const cartQuantity = getItemQuantity(product.id);
   const inWishlist = isInWishlist(product.id);
@@ -83,6 +114,11 @@ export function ProductCard({ product }: ProductCardProps) {
           <Badge className="absolute top-3 right-3 bg-[#ff7b3d] text-white shadow-lg rounded-full px-3 py-1.5 font-semibold">
             {product.condition}
           </Badge>
+          {product.status === "sold" && (
+            <Badge className="absolute top-3 right-1/2 translate-x-1/2 bg-gray-600 text-white shadow-lg rounded-full px-4 py-2 font-bold text-lg z-10 border-2 border-white">
+              SẢN PHẨM ĐÃ BÁN
+            </Badge>
+          )}
           <button
             type="button"
             onClick={handleToggleWishlist}
@@ -122,16 +158,49 @@ export function ProductCard({ product }: ProductCardProps) {
               </div>
             </div>
           </div>
-          <Button
-            type="button"
-            onClick={handleAddToCart}
-            className="w-full mt-4 bg-[#2d6a6a] hover:bg-[#2d6a6a]/90 text-white rounded-xl"
-          >
-            <ShoppingCart className="size-4" />
-            {cartQuantity > 0
-              ? `Thêm nữa (${cartQuantity} trong giỏ)`
-              : "Thêm vào giỏ"}
-          </Button>
+          {isOwnerView ? (
+            <Button
+              type="button"
+              onClick={handleMarkAsSold}
+              disabled={product.status === "sold"}
+              className={`w-full mt-4 rounded-xl font-semibold gap-2 ${
+                product.status === "sold" 
+                  ? "bg-gray-300 text-gray-500 cursor-not-allowed" 
+                  : "bg-[#2d6a6a] hover:bg-[#2d6a6a]/90 text-white shadow-md hover:shadow-lg transition-all"
+              }`}
+            >
+              {product.status === "sold" ? (
+                "Đã bán"
+              ) : (
+                <>
+                  <CheckCircle className="size-4" />
+                  Đánh dấu đã bán
+                </>
+              )}
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              onClick={handleAddToCart}
+              disabled={product.status === "sold"}
+              className={`w-full mt-4 rounded-xl ${
+                product.status === "sold" 
+                  ? "bg-gray-300 text-gray-500 cursor-not-allowed" 
+                  : "bg-[#2d6a6a] hover:bg-[#2d6a6a]/90 text-white"
+              }`}
+            >
+              {product.status === "sold" ? (
+                "Hết hàng"
+              ) : (
+                <>
+                  <ShoppingCart className="size-4" />
+                  {cartQuantity > 0
+                    ? `Thêm nữa (${cartQuantity} trong giỏ)`
+                    : "Thêm vào giỏ"}
+                </>
+              )}
+            </Button>
+          )}
         </CardContent>
       </Card>
     </Link>

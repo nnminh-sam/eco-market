@@ -5,6 +5,7 @@ export const productCategories = [
   "Đầm/Váy",
   "Giày dép",
   "Phụ kiện",
+  "Khác",
 ];
 
 export const productCategoryFilters = ["Tất cả", ...productCategories];
