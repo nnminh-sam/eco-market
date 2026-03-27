@@ -20,6 +20,7 @@ interface CartContextType {
 const CartContext = createContext<CartContextType | undefined>(undefined);
 
 const CART_STORAGE_KEY = "marketeo-cart-items";
+const MAX_ITEM_QUANTITY = 1;
 
 function getInitialItems(): CartItem[] {
   if (typeof window === "undefined") {
@@ -37,16 +38,36 @@ function getInitialItems(): CartItem[] {
       return [];
     }
 
-    return parsed.filter(
-      (item) =>
-        typeof item === "object" &&
-        item !== null &&
-        typeof item.quantity === "number" &&
-        item.quantity > 0 &&
-        typeof item.product === "object" &&
-        item.product !== null &&
-        typeof item.product.id === "string"
-    );
+    return parsed.reduce<CartItem[]>((normalizedItems, item) => {
+      if (
+        typeof item !== "object" ||
+        item === null ||
+        typeof item.quantity !== "number" ||
+        item.quantity <= 0 ||
+        typeof item.product !== "object" ||
+        item.product === null ||
+        typeof item.product.id !== "string"
+      ) {
+        return normalizedItems;
+      }
+
+      const existingItemIndex = normalizedItems.findIndex(
+        (currentItem) => currentItem.product.id === item.product.id
+      );
+
+      const normalizedItem: CartItem = {
+        product: item.product,
+        quantity: MAX_ITEM_QUANTITY,
+      };
+
+      if (existingItemIndex >= 0) {
+        normalizedItems[existingItemIndex] = normalizedItem;
+        return normalizedItems;
+      }
+
+      normalizedItems.push(normalizedItem);
+      return normalizedItems;
+    }, []);
   } catch {
     return [];
   }
@@ -65,17 +86,17 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
   const addToCart = (product: Product, quantity: number = 1) => {
     setItems((prevItems) => {
+      if (quantity <= 0) {
+        return prevItems;
+      }
+
       const existingItem = prevItems.find((item) => item.product.id === product.id);
 
       if (existingItem) {
-        return prevItems.map((item) =>
-          item.product.id === product.id
-            ? { ...item, quantity: item.quantity + quantity }
-            : item
-        );
+        return prevItems;
       }
 
-      return [...prevItems, { product, quantity }];
+      return [...prevItems, { product, quantity: MAX_ITEM_QUANTITY }];
     });
   };
 
@@ -91,7 +112,9 @@ export function CartProvider({ children }: { children: ReactNode }) {
 
     setItems((prevItems) =>
       prevItems.map((item) =>
-        item.product.id === productId ? { ...item, quantity } : item
+        item.product.id === productId
+          ? { ...item, quantity: MAX_ITEM_QUANTITY }
+          : item
       )
     );
   };

@@ -114,7 +114,7 @@ export function Profile() {
                   Tin đăng của tôi
                 </Button>
               </Link>
-              <Link to="/cart">
+              {/* <Link to="/cart">
                 <Button
                   variant="outline"
                   className="gap-2 border-2 border-[#2d6a6a]/30 text-[#2d6a6a] hover:bg-[#2d6a6a]/10 rounded-full px-5"
@@ -122,7 +122,7 @@ export function Profile() {
                   <ShoppingCart className="size-4" />
                   Giỏ hàng
                 </Button>
-              </Link>
+              </Link> */}
             </div>
           </CardContent>
         </Card>

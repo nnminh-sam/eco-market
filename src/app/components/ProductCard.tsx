@@ -45,6 +45,12 @@ export function ProductCard({ product, isOwnerView, onStatusChange }: ProductCar
   const handleAddToCart = (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
+
+    if (cartQuantity > 0) {
+      toast.message("Sản phẩm đã có trong giỏ hàng");
+      return;
+    }
+
     addToCart(product, 1);
     toast.success("Đã thêm sản phẩm vào giỏ hàng 🛒");
   };
@@ -182,21 +188,21 @@ export function ProductCard({ product, isOwnerView, onStatusChange }: ProductCar
             <Button
               type="button"
               onClick={handleAddToCart}
-              disabled={product.status === "sold"}
+              disabled={product.status === "sold" || cartQuantity > 0}
               className={`w-full mt-4 rounded-xl ${
-                product.status === "sold" 
+                product.status === "sold" || cartQuantity > 0
                   ? "bg-gray-300 text-gray-500 cursor-not-allowed" 
                   : "bg-[#2d6a6a] hover:bg-[#2d6a6a]/90 text-white"
               }`}
             >
               {product.status === "sold" ? (
                 "Hết hàng"
+              ) : cartQuantity > 0 ? (
+                "Đã thêm vào giỏ"
               ) : (
                 <>
                   <ShoppingCart className="size-4" />
-                  {cartQuantity > 0
-                    ? `Thêm nữa (${cartQuantity} trong giỏ)`
-                    : "Thêm vào giỏ"}
+                  Thêm vào giỏ
                 </>
               )}
             </Button>

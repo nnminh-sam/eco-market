@@ -32,6 +32,7 @@ import {
 } from "../components/ui/select";
 import { useAuth } from "../context/AuthContext";
 import { useCart } from "../context/CartContext";
+import { useWishlist } from "../context/WishlistContext";
 import { toast } from "sonner";
 import { Product } from "../types/product";
 import {
@@ -79,6 +80,7 @@ export function ProductDetail() {
   const id = params?.id;
   const { isAuthenticated, user } = useAuth();
   const { addToCart, getItemQuantity } = useCart();
+  const { isInWishlist, toggleWishlist } = useWishlist();
   const [product, setProduct] = useState<Product | null>(null);
   const [isLoadingProduct, setIsLoadingProduct] = useState(true);
   const [selectedImageUrl, setSelectedImageUrl] = useState("");
@@ -189,8 +191,28 @@ export function ProductDetail() {
   };
 
   const handleAddToCart = () => {
+    if (cartQuantity > 0) {
+      toast.message("Sản phẩm đã có trong giỏ hàng");
+      return;
+    }
+
     addToCart(product, 1);
     toast.success("Đã thêm sản phẩm vào giỏ hàng 🛒");
+  };
+
+  const handleToggleWishlist = () => {
+    if (!isAuthenticated) {
+      toast.error("Vui lòng đăng nhập để thêm vào danh sách yêu thích");
+      navigate("/login");
+      return;
+    }
+
+    const added = toggleWishlist(product.id);
+    toast.success(
+      added
+        ? "Đã thêm vào danh sách yêu thích ❤️"
+        : "Đã xóa khỏi danh sách yêu thích"
+    );
   };
   
   const handleMarkAsSold = async () => {
@@ -370,6 +392,7 @@ export function ProductDetail() {
   };
 
   const cartQuantity = getItemQuantity(product.id);
+  const inWishlist = isInWishlist(product.id);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-[#f5f5dc]/30 to-white">
@@ -401,8 +424,18 @@ export function ProductDetail() {
                   >
                     <Share2 className="size-5 text-[#2d6a6a]" />
                   </button>
-                  <button className="p-3 bg-white/95 backdrop-blur-sm rounded-full shadow-lg hover:bg-white transition-all hover:scale-110">
-                    <Heart className="size-5 text-[#ff7b3d]" />
+                  <button
+                    type="button"
+                    onClick={handleToggleWishlist}
+                    className="p-3 bg-white/95 backdrop-blur-sm rounded-full shadow-lg hover:bg-white transition-all hover:scale-110"
+                  >
+                    <Heart
+                      className={`size-5 transition-colors ${
+                        inWishlist
+                          ? "text-[#ff7b3d] fill-[#ff7b3d]"
+                          : "text-[#2d6a6a]"
+                      }`}
+                    />
                   </button>
                 </div>
               </CardContent>
@@ -738,11 +771,12 @@ export function ProductDetail() {
                       <Button
                         onClick={handleAddToCart}
                         variant="outline"
-                        className="w-full gap-3 h-14 border-2 border-[#2d6a6a] text-[#2d6a6a] hover:bg-[#2d6a6a] hover:text-white rounded-2xl font-semibold text-lg mb-3"
+                        disabled={cartQuantity > 0}
+                        className="w-full gap-3 h-14 border-2 border-[#2d6a6a] text-[#2d6a6a] hover:bg-[#2d6a6a] hover:text-white rounded-2xl font-semibold text-lg mb-3 disabled:border-gray-300 disabled:text-gray-500 disabled:hover:bg-transparent"
                       >
                         <ShoppingCart className="size-5" />
                         {cartQuantity > 0
-                          ? `Đã có ${cartQuantity} trong giỏ`
+                          ? "Đã thêm vào giỏ"
                           : "Thêm vào giỏ hàng"}
                       </Button>
                       <Button

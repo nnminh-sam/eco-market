@@ -4,9 +4,10 @@ import {
   User,
   LogOut,
   Plus,
-  Recycle,
   ShoppingCart,
   Sparkles,
+  Facebook,
+  Phone,
 } from "lucide-react";
 import { useAuth } from "../context/AuthContext";
 import { useCart } from "../context/CartContext";
@@ -45,45 +46,38 @@ export function Header() {
           </Link>
 
           <nav className="flex items-center gap-3">
-            <Link
-              to="/cart"
-              className="relative p-3 hover:bg-[#2d6a6a]/10 rounded-full transition-all group"
-            >
-              <ShoppingCart className="size-6 text-[#2d6a6a] group-hover:scale-110 transition-transform" />
-              {totalItems > 0 && (
-                <Badge className="absolute -top-1 -right-1 size-6 flex items-center justify-center p-0 text-xs bg-[#ff7b3d] border-2 border-white">
-                  {totalItems > 99 ? "99+" : totalItems}
-                </Badge>
-              )}
-            </Link>
             {isAuthenticated ? (
               <>
-                <Link to="/post-ad">
-                  <Button className="gap-2 bg-[#ff7b3d] hover:bg-[#ff7b3d]/90 text-white shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 transition-all rounded-full px-6">
-                    <Plus className="size-5" />
-                    <span className="font-semibold">Đăng tin</span>
-                  </Button>
+                <Link
+                  to="/cart"
+                  className="relative flex items-center gap-2 px-4 py-3 hover:bg-[#2d6a6a]/10 rounded-full transition-all group"
+                >
+                  <ShoppingCart className="size-6 text-[#2d6a6a] group-hover:scale-110 transition-transform" />
+                  <span className="font-semibold text-[#2d6a6a] hidden sm:inline">Giỏ hàng</span>
+                  {totalItems > 0 && (
+                    <Badge className="absolute -top-1 -right-1 size-6 flex items-center justify-center p-0 text-xs bg-[#ff7b3d] border-2 border-white">
+                      {totalItems > 99 ? "99+" : totalItems}
+                    </Badge>
+                  )}
                 </Link>
                 <Link
                   to="/messages"
-                  className="relative p-3 hover:bg-[#2d6a6a]/10 rounded-full transition-all group"
+                  className="relative flex items-center gap-2 px-4 py-3 hover:bg-[#2d6a6a]/10 rounded-full transition-all group"
                 >
                   <MessageCircle className="size-6 text-[#2d6a6a] group-hover:scale-110 transition-transform" />
+                  <span className="font-semibold text-[#2d6a6a] hidden sm:inline">Tin nhắn</span>
                   {unreadCount > 0 && (
                     <Badge className="absolute -top-1 -right-1 size-6 flex items-center justify-center p-0 text-xs bg-[#ff7b3d] border-2 border-white animate-bounce">
                       {unreadCount}
                     </Badge>
                   )}
                 </Link>
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={logout}
-                  className="gap-2 border-2 border-[#2d6a6a]/30 text-[#2d6a6a] hover:bg-[#2d6a6a] hover:text-white rounded-full px-4"
-                >
-                  <LogOut className="size-4" />
-                  <span className="hidden sm:inline">Đăng xuất</span>
-                </Button>
+                <Link to="/post-ad">
+                  <Button className="gap-2 bg-[#ff7b3d] hover:bg-[#ff7b3d]/90 text-white shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 transition-all rounded-full px-6 h-12">
+                    <Plus className="size-5" />
+                    <span className="font-semibold">Đăng tin</span>
+                  </Button>
+                </Link>
                 <Link to="/profile" aria-label="Hồ sơ cá nhân">
                   <Button
                     variant="ghost"
@@ -93,17 +87,55 @@ export function Header() {
                     <User className="size-6 text-white" />
                   </Button>
                 </Link>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={logout}
+                  className="gap-2 border-2 border-[#2d6a6a]/30 text-[#2d6a6a] hover:bg-[#2d6a6a] hover:text-white rounded-full px-4 h-12"
+                >
+                  <LogOut className="size-4" />
+                  <span className="hidden sm:inline font-semibold">Đăng xuất</span>
+                </Button>
               </>
             ) : (
-              <Link to="/login">
-                <Button
-                  variant="outline"
-                  className="border-2 border-[#2d6a6a] text-[#2d6a6a] hover:bg-[#2d6a6a] hover:text-white rounded-full px-6 shadow-md hover:shadow-lg transition-all"
+              <>
+                <Link
+                  to="/cart"
+                  className="relative flex items-center gap-2 px-4 py-3 hover:bg-[#2d6a6a]/10 rounded-full transition-all group"
                 >
-                  <span className="font-semibold">Đăng nhập</span>
-                </Button>
-              </Link>
+                  <ShoppingCart className="size-6 text-[#2d6a6a] group-hover:scale-110 transition-transform" />
+                  <span className="font-semibold text-[#2d6a6a] hidden sm:inline">Giỏ hàng</span>
+                  {totalItems > 0 && (
+                    <Badge className="absolute -top-1 -right-1 size-6 flex items-center justify-center p-0 text-xs bg-[#ff7b3d] border-2 border-white">
+                      {totalItems > 99 ? "99+" : totalItems}
+                    </Badge>
+                  )}
+                </Link>
+                <Link to="/login">
+                  <Button
+                    variant="outline"
+                    className="border-2 border-[#2d6a6a] text-[#2d6a6a] hover:bg-[#2d6a6a] hover:text-white rounded-full px-6 h-12 shadow-md hover:shadow-lg transition-all"
+                  >
+                    <span className="font-semibold">Đăng nhập</span>
+                  </Button>
+                </Link>
+                <Link to="/login">
+                  <Button className="gap-2 bg-[#ff7b3d] hover:bg-[#ff7b3d]/90 text-white shadow-lg hover:shadow-xl transform hover:-translate-y-0.5 transition-all rounded-full px-6 h-12">
+                    <Plus className="size-5" />
+                    <span className="font-semibold">Đăng tin</span>
+                  </Button>
+                </Link>
+              </>
             )}
+            <a
+              href="https://www.facebook.com/profile.php?id=61576850488205"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="relative flex items-center gap-2 px-4 py-2 border border-[#2d6a6a]/30 hover:bg-[#2d6a6a]/10 rounded-full transition-all group"
+            >
+              <Phone className="size-5 text-[#2d6a6a] group-hover:scale-110 transition-transform" />
+              <span className="font-semibold text-[#2d6a6a] hidden sm:inline">Liên hệ</span>
+            </a>
           </nav>
         </div>
       </div>

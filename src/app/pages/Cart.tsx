@@ -112,7 +112,8 @@ export function Cart() {
                               onClick={() =>
                                 updateQuantity(item.product.id, item.quantity + 1)
                               }
-                              className="size-8 rounded-lg"
+                              disabled={item.quantity >= 1}
+                              className="size-8 rounded-lg disabled:opacity-50"
                             >
                               <Plus className="size-4" />
                             </Button>
