@@ -4,6 +4,7 @@ import { User } from "../types/product";
 interface AuthResult {
   success: boolean;
   message?: string;
+  expiresInSeconds?: number;
 }
 
 interface AuthApiResponse {
@@ -11,12 +12,14 @@ interface AuthApiResponse {
   message?: string;
   token?: string;
   user?: User;
+  expiresInSeconds?: number;
 }
 
 interface AuthContextType {
   user: User | null;
   login: (email: string, password: string) => Promise<AuthResult>;
   signup: (email: string, password: string) => Promise<AuthResult>;
+  verifySignupCode: (email: string, code: string) => Promise<AuthResult>;
   logout: () => void;
   isAuthenticated: boolean;
 }
@@ -162,16 +165,52 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         };
       }
 
+      return {
+        success: true,
+        message: response.data.message ?? "Đã gửi mã xác thực.",
+        expiresInSeconds: response.data.expiresInSeconds,
+      };
+    } catch {
+      return {
+        success: false,
+        message: "Không thể kết nối đến máy chủ đăng ký.",
+      };
+    }
+  };
+
+  const verifySignupCode = async (
+    email: string,
+    code: string,
+  ): Promise<AuthResult> => {
+    try {
+      const response = await requestAuthApi("/api/auth/sign-up/verify", {
+        method: "POST",
+        body: JSON.stringify({
+          email: normalizeEmail(email),
+          code: code.trim(),
+        }),
+      });
+
+      if (!response.ok || !response.data.success) {
+        return {
+          success: false,
+          message: response.data.message ?? "Xác thực đăng ký thất bại.",
+        };
+      }
+
       if (!response.data.user || !response.data.token) {
         return {
           success: false,
-          message: "Phản hồi đăng ký không hợp lệ.",
+          message: "Phản hồi xác thực đăng ký không hợp lệ.",
         };
       }
 
       setUser(response.data.user);
       if (typeof window !== "undefined") {
-        window.localStorage.setItem(AUTH_SESSION_TOKEN_STORAGE_KEY, response.data.token);
+        window.localStorage.setItem(
+          AUTH_SESSION_TOKEN_STORAGE_KEY,
+          response.data.token,
+        );
       }
 
       return {
@@ -181,7 +220,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       return {
         success: false,
-        message: "Không thể kết nối đến máy chủ đăng ký.",
+        message: "Không thể kết nối đến máy chủ xác thực đăng ký.",
       };
     }
   };
@@ -214,6 +253,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         user,
         login,
         signup,
+        verifySignupCode,
         logout,
         isAuthenticated: !!user,
       }}

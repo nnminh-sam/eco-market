@@ -1,5 +1,6 @@
 import http from "node:http";
 import path from "node:path";
+import tls from "node:tls";
 import { fileURLToPath } from "node:url";
 import { performance } from "node:perf_hooks";
 import { promisify } from "node:util";
@@ -44,12 +45,41 @@ const validListingConditions = new Set([
 ]);
 const maxUploadUrlExpiresInSeconds = 300;
 const allowedSignUpEmailDomain = "@st.ueh.edu.vn";
+const defaultWelcomeEmailSender = "nnminh.sam@gmail.com";
+const defaultWelcomeEmailCtaUrl = "http://localhost:5173";
+const signUpVerificationCodeLength = 6;
+const signUpVerificationCodeLifetimeMinutes = 30;
+const signUpVerificationCodeLifetimeMs =
+  signUpVerificationCodeLifetimeMinutes * 60 * 1000;
+const maxSignUpVerificationAttempts = 5;
+const welcomeEmailEnabled =
+  String(process.env.WELCOME_EMAIL_ENABLED ?? "true").trim().toLowerCase() !==
+  "false";
+const welcomeEmailSmtpHost = String(
+  process.env.WELCOME_EMAIL_SMTP_HOST ?? "smtp.gmail.com",
+).trim();
+const welcomeEmailSmtpPort = Number(process.env.WELCOME_EMAIL_SMTP_PORT ?? 465);
+const welcomeEmailFromAddress = String(
+  process.env.WELCOME_EMAIL_FROM ?? defaultWelcomeEmailSender,
+).trim();
+const welcomeEmailSmtpUser = String(
+  process.env.WELCOME_EMAIL_USER ?? welcomeEmailFromAddress,
+).trim();
+const welcomeEmailSmtpPass = String(process.env.WELCOME_EMAIL_PASS ?? "").trim();
+const welcomeEmailCtaUrl = String(
+  process.env.WELCOME_EMAIL_CTA_URL ??
+    process.env.APP_FRONTEND_URL ??
+    defaultWelcomeEmailCtaUrl,
+).trim();
+const smtpTimeoutMs = 15_000;
 
 const sql = databaseUrl ? neon(databaseUrl) : null;
 const databaseStartupError = databaseUrl
   ? null
   : "Missing DATABASE_URL. Add it to your .env file.";
 let databaseInitError = null;
+let hasLoggedWelcomeEmailConfigWarning = false;
+let hasLoggedWelcomeEmailDisabledInfo = false;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -127,6 +157,19 @@ async function ensureAuthTables() {
       token TEXT PRIMARY KEY,
       user_id BIGINT NOT NULL REFERENCES auth_users(id) ON DELETE CASCADE,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL
+    )
+  `;
+
+  await sql`
+    CREATE TABLE IF NOT EXISTS auth_signup_verifications (
+      email TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      password_hash TEXT NOT NULL,
+      code_hash TEXT NOT NULL,
+      attempt_count INTEGER NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
       expires_at TIMESTAMPTZ NOT NULL
     )
   `;
@@ -299,6 +342,541 @@ function normalizeEmail(email) {
   return String(email).trim().toLowerCase();
 }
 
+function normalizeVerificationCode(code) {
+  return String(code).trim().replace(/\s+/g, "");
+}
+
+function generateSignUpVerificationCode() {
+  const maxValue = 10 ** signUpVerificationCodeLength;
+  return String(Math.floor(Math.random() * maxValue)).padStart(
+    signUpVerificationCodeLength,
+    "0",
+  );
+}
+
+function hashSignUpVerificationCode(email, code) {
+  return createHash("sha256")
+    .update(`${normalizeEmail(email)}:${normalizeVerificationCode(code)}`)
+    .digest("hex");
+}
+
+function isPostgresUniqueViolation(error) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    error.code === "23505"
+  );
+}
+
+function maskEmailAddress(email) {
+  const normalized = String(email).trim().toLowerCase();
+  const [localPart = "", domainPart = ""] = normalized.split("@");
+
+  if (!localPart || !domainPart) {
+    return "***";
+  }
+
+  if (localPart.length <= 2) {
+    return `${localPart[0] ?? "*"}*@${domainPart}`;
+  }
+
+  return `${localPart.slice(0, 2)}***@${domainPart}`;
+}
+
+function isValidEmailAddress(email) {
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  return emailRegex.test(email);
+}
+
+function sanitizeSmtpValue(value) {
+  return String(value).replace(/[\r\n]/g, "").trim();
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function normalizePublicUrl(value, fallback) {
+  try {
+    const parsedUrl = new URL(String(value).trim());
+    if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+      return fallback;
+    }
+
+    return parsedUrl.toString().replace(/\/+$/g, "");
+  } catch {
+    return fallback;
+  }
+}
+
+function normalizeSmtpPort(value) {
+  if (!Number.isInteger(value) || value < 1 || value > 65535) {
+    return 465;
+  }
+
+  return value;
+}
+
+function getWelcomeEmailConfigurationState() {
+  const missingSettings = [];
+
+  if (!welcomeEmailSmtpHost) {
+    missingSettings.push("WELCOME_EMAIL_SMTP_HOST");
+  }
+
+  if (!welcomeEmailFromAddress) {
+    missingSettings.push("WELCOME_EMAIL_FROM");
+  }
+
+  if (!welcomeEmailSmtpUser) {
+    missingSettings.push("WELCOME_EMAIL_USER");
+  }
+
+  if (!welcomeEmailSmtpPass) {
+    missingSettings.push("WELCOME_EMAIL_PASS");
+  }
+
+  return {
+    enabled: welcomeEmailEnabled,
+    missingSettings,
+    hasRequiredSettings: missingSettings.length === 0,
+  };
+}
+
+function hasWelcomeEmailConfiguration() {
+  const configurationState = getWelcomeEmailConfigurationState();
+
+  return (
+    configurationState.enabled && configurationState.hasRequiredSettings
+  );
+}
+
+function logWelcomeEmailConfigurationOnStartup() {
+  const configurationState = getWelcomeEmailConfigurationState();
+  const normalizedPort = normalizeSmtpPort(welcomeEmailSmtpPort);
+
+  if (!configurationState.enabled) {
+    console.info("[email] Welcome email is disabled (WELCOME_EMAIL_ENABLED=false).");
+    return;
+  }
+
+  console.info(
+    `[email] Welcome email config: host=${welcomeEmailSmtpHost}:${normalizedPort}, from=${welcomeEmailFromAddress}, user=${welcomeEmailSmtpUser}, passwordSet=${welcomeEmailSmtpPass ? "yes" : "no"}, ctaUrl=${normalizePublicUrl(welcomeEmailCtaUrl, defaultWelcomeEmailCtaUrl)}`,
+  );
+
+  if (!configurationState.hasRequiredSettings) {
+    console.warn(
+      `[email] Missing welcome email settings: ${configurationState.missingSettings.join(", ",
+      )}`,
+    );
+  }
+}
+
+function readSmtpResponse(socket) {
+  return new Promise((resolve, reject) => {
+    let bufferedText = "";
+    const responseLines = [];
+
+    const timeout = setTimeout(() => {
+      cleanup();
+      reject(new Error("SMTP server response timed out."));
+    }, smtpTimeoutMs);
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      socket.off("data", onData);
+      socket.off("error", onError);
+      socket.off("close", onClose);
+    };
+
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+
+    const onClose = () => {
+      cleanup();
+      reject(new Error("SMTP connection closed unexpectedly."));
+    };
+
+    const onData = (chunk) => {
+      bufferedText += chunk.toString("utf8");
+      const splitLines = bufferedText.split(/\r?\n/);
+      bufferedText = splitLines.pop() ?? "";
+
+      for (const line of splitLines) {
+        if (!line) {
+          continue;
+        }
+
+        responseLines.push(line);
+        const responseMatch = line.match(/^(\d{3})([ -])/);
+        if (!responseMatch) {
+          continue;
+        }
+
+        if (responseMatch[2] !== " ") {
+          continue;
+        }
+
+        cleanup();
+        resolve({
+          code: Number(responseMatch[1]),
+          lines: responseLines,
+        });
+        return;
+      }
+    };
+
+    socket.on("data", onData);
+    socket.on("error", onError);
+    socket.on("close", onClose);
+  });
+}
+
+async function runSmtpCommand(socket, command, expectedCodes, label) {
+  if (command) {
+    socket.write(`${command}\r\n`);
+  }
+
+  const response = await readSmtpResponse(socket);
+  if (!expectedCodes.includes(response.code)) {
+    throw new Error(
+      `SMTP ${label} failed (${response.code}): ${response.lines.join(" | ")}`,
+    );
+  }
+}
+
+function escapeSmtpData(value) {
+  return value
+    .replace(/\r?\n/g, "\r\n")
+    .split("\r\n")
+    .map((line) => (line.startsWith(".") ? `.${line}` : line))
+    .join("\r\n");
+}
+
+async function sendEmailViaSmtp({
+  recipientEmail,
+  subject,
+  plainTextBody,
+  htmlBody,
+  category,
+}) {
+  const configurationState = getWelcomeEmailConfigurationState();
+
+  if (!configurationState.enabled) {
+    if (!hasLoggedWelcomeEmailDisabledInfo) {
+      hasLoggedWelcomeEmailDisabledInfo = true;
+      console.info("[email] SMTP email sending is disabled.");
+    }
+    return;
+  }
+
+  if (!configurationState.hasRequiredSettings) {
+    if (!hasLoggedWelcomeEmailConfigWarning) {
+      hasLoggedWelcomeEmailConfigWarning = true;
+      console.warn(
+        `[email] SMTP email skipped: missing settings ${configurationState.missingSettings.join(", ")}`,
+      );
+    }
+    return;
+  }
+
+  const recipient = sanitizeSmtpValue(recipientEmail);
+  const sender = sanitizeSmtpValue(welcomeEmailFromAddress);
+  const smtpUser = sanitizeSmtpValue(welcomeEmailSmtpUser);
+  const smtpPass = sanitizeSmtpValue(welcomeEmailSmtpPass);
+  const smtpHost = sanitizeSmtpValue(welcomeEmailSmtpHost);
+  const smtpPort = normalizeSmtpPort(welcomeEmailSmtpPort);
+
+  if (!isValidEmailAddress(recipient) || !isValidEmailAddress(sender)) {
+    throw new Error(`Invalid sender or recipient email for ${category} email.`);
+  }
+
+  console.info(
+    `[email] Sending ${category} email to ${maskEmailAddress(
+      recipient,
+    )} via ${smtpHost}:${smtpPort}`,
+  );
+
+  const socket = await new Promise((resolve, reject) => {
+    const connection = tls.connect({
+      host: smtpHost,
+      port: smtpPort,
+      servername: smtpHost,
+    });
+
+    const timeout = setTimeout(() => {
+      connection.destroy();
+      reject(new Error("Could not establish SMTP connection in time."));
+    }, smtpTimeoutMs);
+
+    connection.once("secureConnect", () => {
+      clearTimeout(timeout);
+      resolve(connection);
+    });
+
+    connection.once("error", (error) => {
+      clearTimeout(timeout);
+      reject(error);
+    });
+  });
+
+  try {
+    await runSmtpCommand(socket, "", [220], "greeting");
+    await runSmtpCommand(socket, "EHLO localhost", [250], "EHLO");
+    await runSmtpCommand(socket, "AUTH LOGIN", [334], "AUTH LOGIN");
+    await runSmtpCommand(
+      socket,
+      Buffer.from(smtpUser, "utf8").toString("base64"),
+      [334],
+      "username",
+    );
+    await runSmtpCommand(
+      socket,
+      Buffer.from(smtpPass, "utf8").toString("base64"),
+      [235],
+      "password",
+    );
+    await runSmtpCommand(socket, `MAIL FROM:<${sender}>`, [250], "MAIL FROM");
+    await runSmtpCommand(socket, `RCPT TO:<${recipient}>`, [250, 251], "RCPT TO");
+    await runSmtpCommand(socket, "DATA", [354], "DATA");
+
+    const mimeBoundary = `----=_EcoMarket_${randomBytes(12).toString("hex")}`;
+    const messageData = [
+      `From: EcoMarket <${sender}>`,
+      `To: <${recipient}>`,
+      `Subject: ${subject}`,
+      `Date: ${new Date().toUTCString()}`,
+      "MIME-Version: 1.0",
+      `Content-Type: multipart/alternative; boundary=\"${mimeBoundary}\"`,
+      "",
+      `--${mimeBoundary}`,
+      "Content-Type: text/plain; charset=utf-8",
+      "Content-Transfer-Encoding: 8bit",
+      "",
+      plainTextBody,
+      `--${mimeBoundary}`,
+      "Content-Type: text/html; charset=utf-8",
+      "Content-Transfer-Encoding: 8bit",
+      "",
+      htmlBody,
+      `--${mimeBoundary}--`,
+    ].join("\r\n");
+
+    socket.write(`${escapeSmtpData(messageData)}\r\n.\r\n`);
+    await runSmtpCommand(socket, "", [250], "message body");
+    await runSmtpCommand(socket, "QUIT", [221], "QUIT");
+
+    console.info(
+      `[email] ${category} email sent successfully to ${maskEmailAddress(
+        recipient,
+      )}.`,
+    );
+  } finally {
+    socket.end();
+  }
+}
+
+async function sendSignUpVerificationCodeEmail({
+  recipientEmail,
+  recipientName,
+  verificationCode,
+}) {
+  const safeVerificationCode = escapeHtml(verificationCode);
+  const subject = "Mã xác thực đăng ký EcoMarket";
+  const faqUrl = "https://www.facebook.com/profile.php?id=61576850488205";
+  const supportUrl = "https://www.facebook.com/profile.php?id=61576850488205";
+
+  const plainTextBody = [
+    `Mã xác nhận của bạn là [ ${verificationCode} ]`,
+    "",
+    `Mã xác nhận này sẽ hết hiệu lực trong vòng ${signUpVerificationCodeLifetimeMinutes} phút.`,
+    "",
+    "Nếu bạn không gửi yêu cầu thay đổi thông tin hoặc nếu cần hỗ trợ thêm, vui lòng liên hệ Trung Tâm Khách Hàng của chúng tôi tại https://www.facebook.com/profile.php?id=61576850488205.",
+    "",
+    "Xin cảm ơn!",
+    "EcoMarket",
+    "",
+    "*Email này được gửi từ một địa chỉ tự động và không thể nhận email phản hồi. Vui lòng không phản hồi lại email này. Nếu bạn mong muốn liên hệ đến chúng tôi, địa chỉ email Trung Tâm Khách Hàng của chúng tôi tại https://www.facebook.com/profile.php?id=61576850488205",
+  ].join("\r\n");
+
+  const htmlBody = `
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mã xác thực EcoMarket</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f6f8f7;font-family:Arial,Helvetica,sans-serif;color:#2f3e46;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="padding:16px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background:#ffffff;padding:20px;border-radius:8px;">
+            
+            <tr>
+              <td style="text-align:center;padding-bottom:16px;">
+                <strong style="font-size:20px;">EcoMarket</strong>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="font-size:15px;line-height:1.6;padding-bottom:12px;">
+                Mã xác nhận của bạn:
+              </td>
+            </tr>
+
+            <tr>
+              <td align="center" style="padding:12px 0;">
+                <div style="display:inline-block;padding:10px 16px;border:1px dashed #2d6a6a;font-size:26px;font-weight:700;letter-spacing:6px;color:#2d6a6a;">
+                  ${safeVerificationCode}
+                </div>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="font-size:13px;color:#b54708;padding-bottom:12px;">
+                Có hiệu lực trong ${signUpVerificationCodeLifetimeMinutes} phút.
+              </td>
+            </tr>
+
+            <tr>
+              <td style="font-size:13px;line-height:1.6;padding-bottom:12px;">
+                Nếu bạn không yêu cầu, vui lòng bỏ qua email này hoặc liên hệ hỗ trợ:
+                <br/>
+                <a href="${supportUrl}" target="_blank" style="color:#2d6a6a;">Hỗ trợ khách hàng</a>
+              </td>
+            </tr>
+
+            <tr>
+              <td style="font-size:12px;color:#6b7f86;">
+                Email tự động, không nhận phản hồi.
+              </td>
+            </tr>
+
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
+`.trim();
+
+  await sendEmailViaSmtp({
+    recipientEmail,
+    subject,
+    plainTextBody,
+    htmlBody,
+    category: "signup verification",
+  });
+}
+
+async function sendWelcomeEmail({ recipientEmail, recipientName }) {
+  const safeRecipientName = sanitizeSmtpValue(recipientName || "bạn");
+  const safeRecipientNameHtml = escapeHtml(safeRecipientName);
+  const normalizedCtaUrl = normalizePublicUrl(
+    welcomeEmailCtaUrl,
+    defaultWelcomeEmailCtaUrl,
+  );
+  const safeCtaUrl = escapeHtml(normalizedCtaUrl);
+
+  const subject = "🎉 Chào mừng bạn đến với EcoMarket";
+  const plainTextBody = [
+    `Xin chào ${safeRecipientName},`,
+    "",
+    "Chào mừng bạn đã đăng ký tài khoản EcoMarket!",
+    "",
+    "Bạn đã sẵn sàng để:",
+    "- Khám phá sản phẩm cũ chất lượng",
+    "- Đăng bán đồ không còn dùng",
+    "- Nhắn tin trực tiếp với người mua/bán",
+    "",
+    `Khám phá sản phẩm ngay: ${normalizedCtaUrl}`,
+    "",
+    "Cảm ơn bạn đã tham gia cộng đồng sống xanh cùng EcoMarket.",
+    "",
+    "Trân trọng,",
+    "Đội ngũ EcoMarket",
+  ].join("\r\n");
+
+  const htmlBody = `
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Chào mừng bạn đến với EcoMarket</title>
+  </head>
+  <body style="margin:0;padding:0;background:#f6f8f7;font-family:Arial,Helvetica,sans-serif;color:#2f3e46;">
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background:#f6f8f7;padding:24px 12px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="max-width:600px;background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 8px 30px rgba(45,106,106,0.12);">
+            <tr>
+              <td style="background:linear-gradient(135deg,#2d6a6a,#ff7b3d);padding:28px 24px;text-align:center;color:#ffffff;">
+                <h1 style="margin:0;font-size:28px;line-height:1.3;">EcoMarket</h1>
+                <p style="margin:8px 0 0;font-size:14px;opacity:0.95;">Chợ đồ cũ xanh cho cộng đồng bền vững</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:28px 24px 14px;">
+                <p style="margin:0 0 12px;font-size:18px;font-weight:700;">Xin chào ${safeRecipientNameHtml} 👋</p>
+                <p style="margin:0 0 14px;font-size:15px;line-height:1.7;">Cảm ơn bạn đã đăng ký tài khoản tại <strong>EcoMarket</strong>. Từ bây giờ, bạn có thể dễ dàng mua bán đồ cũ chất lượng và góp phần giảm rác thải cho môi trường.</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:0 24px 8px;">
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background:#f8fbfb;border:1px solid #e3ecec;border-radius:12px;">
+                  <tr>
+                    <td style="padding:16px 18px;">
+                      <p style="margin:0 0 10px;font-size:14px;font-weight:700;color:#2d6a6a;">Bạn đã sẵn sàng để:</p>
+                      <p style="margin:0 0 8px;font-size:14px;line-height:1.6;">✅ Khám phá sản phẩm cũ chất lượng với giá tốt</p>
+                      <p style="margin:0 0 8px;font-size:14px;line-height:1.6;">✅ Đăng bán món đồ không còn dùng</p>
+                      <p style="margin:0;font-size:14px;line-height:1.6;">✅ Nhắn tin trực tiếp với người mua / người bán</p>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:8px 24px 10px;text-align:center;">
+                <a href="${safeCtaUrl}" target="_blank" rel="noopener noreferrer" style="display:inline-block;background:#2d6a6a;color:#ffffff;text-decoration:none;font-weight:700;font-size:14px;line-height:1;padding:14px 22px;border-radius:999px;">Khám phá sản phẩm</a>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:18px 24px 28px;">
+                <p style="margin:0;font-size:14px;line-height:1.7;">Chúc bạn có nhiều giao dịch hiệu quả và trải nghiệm tuyệt vời tại EcoMarket 💚</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="background:#f3f6f6;padding:16px 24px;text-align:center;">
+                <p style="margin:0;font-size:12px;color:#6b7f86;">Email này được gửi tự động sau khi bạn đăng ký tài khoản EcoMarket.</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>
+`.trim();
+
+  await sendEmailViaSmtp({
+    recipientEmail,
+    subject,
+    plainTextBody,
+    htmlBody,
+    category: "welcome",
+  });
+}
+
 function buildDisplayNameFromEmail(email) {
   const localPart = email.split("@")[0] || "nguoi dung";
   return localPart
@@ -428,6 +1006,83 @@ async function getUserFromSessionToken(token) {
   return sessions[0] ?? null;
 }
 
+async function removeExpiredSignUpVerificationRequests() {
+  await sql`
+    DELETE FROM auth_signup_verifications
+    WHERE expires_at <= NOW()
+  `;
+}
+
+async function upsertSignUpVerificationRequest({
+  email,
+  name,
+  passwordHash,
+  codeHash,
+  expiresAt,
+}) {
+  await sql`
+    INSERT INTO auth_signup_verifications (
+      email,
+      name,
+      password_hash,
+      code_hash,
+      attempt_count,
+      expires_at,
+      updated_at
+    )
+    VALUES (
+      ${email},
+      ${name},
+      ${passwordHash},
+      ${codeHash},
+      0,
+      ${expiresAt},
+      NOW()
+    )
+    ON CONFLICT (email)
+    DO UPDATE SET
+      name = EXCLUDED.name,
+      password_hash = EXCLUDED.password_hash,
+      code_hash = EXCLUDED.code_hash,
+      attempt_count = 0,
+      expires_at = EXCLUDED.expires_at,
+      updated_at = NOW()
+  `;
+}
+
+async function getSignUpVerificationRequestByEmail(email) {
+  const rows = await sql`
+    SELECT email, name, password_hash, code_hash, attempt_count, expires_at
+    FROM auth_signup_verifications
+    WHERE email = ${email}
+    LIMIT 1
+  `;
+
+  return rows[0] ?? null;
+}
+
+async function deleteSignUpVerificationRequestByEmail(email) {
+  await sql`
+    DELETE FROM auth_signup_verifications
+    WHERE email = ${email}
+  `;
+}
+
+async function incrementSignUpVerificationAttempt(email) {
+  const rows = await sql`
+    UPDATE auth_signup_verifications
+    SET attempt_count = attempt_count + 1, updated_at = NOW()
+    WHERE email = ${email}
+    RETURNING attempt_count
+  `;
+
+  return Number(rows[0]?.attempt_count ?? 0);
+}
+
+function hasVerificationExpired(expiresAtValue) {
+  return new Date(expiresAtValue).getTime() <= Date.now();
+}
+
 function normalizeImageUrls(imageUrls) {
   if (typeof imageUrls === "string") {
     try {
@@ -492,8 +1147,7 @@ async function handleSignUp(req, res) {
     return;
   }
 
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-  if (!emailRegex.test(email)) {
+  if (!isValidEmailAddress(email)) {
     sendJson(res, 400, {
       success: false,
       message: "Email không hợp lệ.",
@@ -529,21 +1183,188 @@ async function handleSignUp(req, res) {
     return;
   }
 
+  const verificationCode = generateSignUpVerificationCode();
+  const verificationCodeHash = hashSignUpVerificationCode(email, verificationCode);
   const passwordHash = await hashPassword(password);
   const name = buildDisplayNameFromEmail(email);
+  const expiresAt = new Date(
+    Date.now() + signUpVerificationCodeLifetimeMs,
+  ).toISOString();
 
-  const insertedUsers = await sql`
-    INSERT INTO auth_users (name, email, password_hash)
-    VALUES (${name}, ${email}, ${passwordHash})
-    RETURNING id, name, email, created_at AS joined_date
+  await removeExpiredSignUpVerificationRequests();
+  await upsertSignUpVerificationRequest({
+    email,
+    name,
+    passwordHash,
+    codeHash: verificationCodeHash,
+    expiresAt,
+  });
+
+  try {
+    await sendSignUpVerificationCodeEmail({
+      recipientEmail: email,
+      recipientName: name,
+      verificationCode,
+    });
+  } catch (error) {
+    console.error(
+      `[email] Failed to send signup verification code to ${maskEmailAddress(
+        email,
+      )}:`,
+      error,
+    );
+    sendJson(res, 500, {
+      success: false,
+      message: "Không thể gửi mã xác thực. Vui lòng thử lại sau.",
+    });
+    return;
+  }
+
+  sendJson(res, 200, {
+    success: true,
+    message: `Mã xác thực đã được gửi đến email của bạn. Mã có hiệu lực trong ${signUpVerificationCodeLifetimeMinutes} phút.`,
+    expiresInSeconds: Math.floor(signUpVerificationCodeLifetimeMs / 1000),
+  });
+}
+
+async function handleVerifySignUpCode(req, res) {
+  const payload = await readJsonBody(req);
+  const email = normalizeEmail(payload.email);
+  const verificationCode = normalizeVerificationCode(payload.code);
+
+  if (!email || !verificationCode) {
+    sendJson(res, 400, {
+      success: false,
+      message: "Email và mã xác thực là bắt buộc.",
+    });
+    return;
+  }
+
+  if (!isValidEmailAddress(email)) {
+    sendJson(res, 400, {
+      success: false,
+      message: "Email không hợp lệ.",
+    });
+    return;
+  }
+
+  if (!/^\d+$/.test(verificationCode) || verificationCode.length !== signUpVerificationCodeLength) {
+    sendJson(res, 400, {
+      success: false,
+      message: `Mã xác thực phải gồm ${signUpVerificationCodeLength} chữ số.`,
+    });
+    return;
+  }
+
+  const existingUsers = await sql`
+    SELECT id FROM auth_users WHERE email = ${email} LIMIT 1
   `;
+
+  if (existingUsers.length > 0) {
+    await deleteSignUpVerificationRequestByEmail(email);
+    sendJson(res, 409, {
+      success: false,
+      message: "Email này đã được sử dụng.",
+    });
+    return;
+  }
+
+  await removeExpiredSignUpVerificationRequests();
+  const verificationRequest = await getSignUpVerificationRequestByEmail(email);
+
+  if (!verificationRequest) {
+    sendJson(res, 400, {
+      success: false,
+      message: "Không tìm thấy yêu cầu xác thực hoặc mã đã hết hạn. Vui lòng đăng ký lại.",
+    });
+    return;
+  }
+
+  if (hasVerificationExpired(verificationRequest.expires_at)) {
+    await deleteSignUpVerificationRequestByEmail(email);
+    sendJson(res, 400, {
+      success: false,
+      message: "Mã xác thực đã hết hạn. Vui lòng đăng ký lại để nhận mã mới.",
+    });
+    return;
+  }
+
+  const expectedCodeHash = String(verificationRequest.code_hash);
+  const providedCodeHash = hashSignUpVerificationCode(email, verificationCode);
+  const expectedCodeHashBuffer = Buffer.from(expectedCodeHash, "utf8");
+  const providedCodeHashBuffer = Buffer.from(providedCodeHash, "utf8");
+  const isValidCode =
+    expectedCodeHashBuffer.length === providedCodeHashBuffer.length &&
+    timingSafeEqual(expectedCodeHashBuffer, providedCodeHashBuffer);
+
+  if (!isValidCode) {
+    const attemptCount = await incrementSignUpVerificationAttempt(email);
+    if (attemptCount >= maxSignUpVerificationAttempts) {
+      await deleteSignUpVerificationRequestByEmail(email);
+      sendJson(res, 400, {
+        success: false,
+        message:
+          "Mã xác thực không đúng quá nhiều lần. Vui lòng đăng ký lại để nhận mã mới.",
+      });
+      return;
+    }
+
+    sendJson(res, 400, {
+      success: false,
+      message: "Mã xác thực không đúng.",
+    });
+    return;
+  }
+
+  let insertedUsers;
+  try {
+    insertedUsers = await sql`
+      INSERT INTO auth_users (name, email, password_hash)
+      VALUES (
+        ${verificationRequest.name},
+        ${email},
+        ${verificationRequest.password_hash}
+      )
+      RETURNING id, name, email, created_at AS joined_date
+    `;
+  } catch (error) {
+    if (isPostgresUniqueViolation(error)) {
+      await deleteSignUpVerificationRequestByEmail(email);
+      sendJson(res, 409, {
+        success: false,
+        message: "Email này đã được sử dụng.",
+      });
+      return;
+    }
+
+    throw error;
+  }
 
   const user = insertedUsers[0];
   const token = await createSession(user.id);
+  await deleteSignUpVerificationRequestByEmail(email);
+
+  console.info(
+    `[auth] Signup verified for ${maskEmailAddress(
+      user.email,
+    )}; triggering welcome email.`,
+  );
+
+  try {
+    await sendWelcomeEmail({
+      recipientEmail: user.email,
+      recipientName: user.name,
+    });
+  } catch (error) {
+    console.error(
+      `[email] Failed to send welcome email to ${maskEmailAddress(user.email)}:`,
+      error,
+    );
+  }
 
   sendJson(res, 201, {
     success: true,
-    message: "Tạo tài khoản thành công!",
+    message: "Xác thực thành công! Tài khoản đã được tạo.",
     user: mapUserRow(user),
     token,
   });
@@ -1312,6 +2133,7 @@ async function serveStaticAsset(res, pathName) {
 }
 
 await initializeDatabase();
+logWelcomeEmailConfigurationOnStartup();
 
 export async function requestHandler(req, res, options = {}) {
   const { serveStatic = true, pathNameOverride = null } = options;
@@ -1347,6 +2169,15 @@ export async function requestHandler(req, res, options = {}) {
   try {
     if (method === "POST" && pathName === "/api/auth/sign-up") {
       await handleSignUp(req, res);
+      return;
+    }
+
+    if (
+      method === "POST" &&
+      (pathName === "/api/auth/sign-up/verify" ||
+        pathName === "/api/auth/signup/verify")
+    ) {
+      await handleVerifySignUpCode(req, res);
       return;
     }
 

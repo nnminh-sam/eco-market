@@ -26,9 +26,17 @@ export function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [verificationCode, setVerificationCode] = useState("");
+  const [isVerificationStep, setIsVerificationStep] = useState(false);
+  const [verificationExpiresInSeconds, setVerificationExpiresInSeconds] = useState<number | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const { login, signup } = useAuth();
+  const { login, signup, verifySignupCode } = useAuth();
   const navigate = useNavigate();
+
+  const verificationLifetimeMinutes = Math.max(
+    1,
+    Math.ceil((verificationExpiresInSeconds ?? 300) / 60)
+  );
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -40,8 +48,29 @@ export function Login() {
       return;
     }
 
-    if (isSignUpMode && password !== confirmPassword) {
+    if (isSignUpMode && !isVerificationStep && password !== confirmPassword) {
       toast.error("Mật khẩu xác nhận không khớp.");
+      return;
+    }
+
+    if (isSignUpMode && isVerificationStep) {
+      const normalizedCode = verificationCode.trim();
+      if (!normalizedCode) {
+        toast.error("Vui lòng nhập mã xác thực.");
+        return;
+      }
+
+      setIsSubmitting(true);
+      const result = await verifySignupCode(fullEmail, normalizedCode);
+      setIsSubmitting(false);
+
+      if (result.success) {
+        toast.success(result.message ?? "Thành công!");
+        navigate("/");
+      } else {
+        toast.error(result.message ?? "Xác thực đăng ký thất bại.");
+      }
+
       return;
     }
 
@@ -53,9 +82,40 @@ export function Login() {
 
     if (result.success) {
       toast.success(result.message ?? "Thành công!");
-      navigate("/");
+      if (isSignUpMode) {
+        setIsVerificationStep(true);
+        setVerificationExpiresInSeconds(result.expiresInSeconds ?? 300);
+        setVerificationCode("");
+      } else {
+        navigate("/");
+      }
     } else {
       toast.error(result.message ?? "Đăng nhập thất bại.");
+    }
+  };
+
+  const handleResendVerificationCode = async () => {
+    const fullEmail = `${email}@st.ueh.edu.vn`;
+
+    if (!hasAllowedSignUpEmail(fullEmail)) {
+      toast.error(invalidSignUpEmailMessage);
+      return;
+    }
+
+    if (password.length < 6) {
+      toast.error("Mật khẩu cần ít nhất 6 ký tự.");
+      return;
+    }
+
+    setIsSubmitting(true);
+    const result = await signup(fullEmail, password);
+    setIsSubmitting(false);
+
+    if (result.success) {
+      toast.success(result.message ?? "Đã gửi lại mã xác thực.");
+      setVerificationExpiresInSeconds(result.expiresInSeconds ?? 300);
+    } else {
+      toast.error(result.message ?? "Không thể gửi lại mã xác thực.");
     }
   };
 
@@ -63,6 +123,9 @@ export function Login() {
     setIsSignUpMode((prev) => !prev);
     setPassword("");
     setConfirmPassword("");
+    setVerificationCode("");
+    setIsVerificationStep(false);
+    setVerificationExpiresInSeconds(null);
   };
 
   return (
@@ -94,7 +157,9 @@ export function Login() {
           </div>
           <CardDescription className="text-base">
             {isSignUpMode
-              ? "Tạo tài khoản bằng email và mật khẩu"
+              ? isVerificationStep
+                ? "Nhập mã xác thực đã gửi qua email để hoàn tất đăng ký"
+                : "Tạo tài khoản bằng email và mật khẩu"
               : "Đăng nhập để đăng tin và nhắn tin với người bán"}
           </CardDescription>
         </CardHeader>
@@ -111,6 +176,7 @@ export function Login() {
                   placeholder="example"
                   value={email}
                   onChange={(e) => setEmail(e.target.value.replace(/@.*$/, ""))}
+                  disabled={isSignUpMode && isVerificationStep}
                   required
                   className="h-full border-0 focus-visible:ring-0 focus-visible:ring-offset-0 bg-transparent flex-1 px-4 text-base placeholder:text-gray-400"
                 />
@@ -119,21 +185,23 @@ export function Login() {
                 </div>
               </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="password" className="text-[#2f3e46]">
-                Mật khẩu
-              </Label>
-              <Input
-                id="password"
-                type="password"
-                placeholder="Password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                required
-                className="h-12 rounded-xl border-2 border-[#2d6a6a]/20 focus:border-[#2d6a6a] focus-visible:ring-4 focus-visible:ring-[#2d6a6a]/10 transition-all"
-              />
-            </div>
-            {isSignUpMode && (
+            {(!isSignUpMode || !isVerificationStep) && (
+              <div className="space-y-2">
+                <Label htmlFor="password" className="text-[#2f3e46]">
+                  Mật khẩu
+                </Label>
+                <Input
+                  id="password"
+                  type="password"
+                  placeholder="Password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  required
+                  className="h-12 rounded-xl border-2 border-[#2d6a6a]/20 focus:border-[#2d6a6a] focus-visible:ring-4 focus-visible:ring-[#2d6a6a]/10 transition-all"
+                />
+              </div>
+            )}
+            {isSignUpMode && !isVerificationStep && (
               <div className="space-y-2">
                 <Label htmlFor="confirmPassword" className="text-[#2f3e46]">
                   Xác nhận mật khẩu
@@ -149,6 +217,29 @@ export function Login() {
                 />
               </div>
             )}
+            {isSignUpMode && isVerificationStep && (
+              <div className="space-y-2">
+                <Label htmlFor="verificationCode" className="text-[#2f3e46]">
+                  Mã xác thực
+                </Label>
+                <Input
+                  id="verificationCode"
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="Nhập mã 6 chữ số"
+                  value={verificationCode}
+                  onChange={(e) =>
+                    setVerificationCode(e.target.value.replace(/[^0-9]/g, ""))
+                  }
+                  required
+                  maxLength={6}
+                  className="h-12 rounded-xl border-2 border-[#2d6a6a]/20 focus:border-[#2d6a6a] focus-visible:ring-4 focus-visible:ring-[#2d6a6a]/10 transition-all text-center tracking-[0.35em] text-lg"
+                />
+                <p className="text-sm text-[#2d6a6a]/75">
+                  Mã xác thực có hiệu lực trong {verificationLifetimeMinutes} phút.
+                </p>
+              </div>
+            )}
             <Button
               type="submit"
               disabled={isSubmitting}
@@ -158,12 +249,40 @@ export function Login() {
                 {isSubmitting
                   ? "Đang xử lý..."
                   : isSignUpMode
-                    ? "Tạo tài khoản"
+                    ? isVerificationStep
+                      ? "Xác minh mã"
+                      : "Gửi mã xác thực"
                     : "Đăng nhập"}
               </span>
               <ArrowRight className="size-5 ml-2 group-hover:translate-x-1 transition-transform" />
             </Button>
           </form>
+
+          {isSignUpMode && isVerificationStep && (
+            <div className="mt-4 flex items-center justify-between gap-3">
+              <button
+                type="button"
+                disabled={isSubmitting}
+                onClick={() => {
+                  setIsVerificationStep(false);
+                  setVerificationCode("");
+                }}
+                className="text-sm text-[#2d6a6a] hover:text-[#ff7b3d] font-medium transition-colors disabled:opacity-60"
+              >
+                Sửa email / mật khẩu
+              </button>
+              <button
+                type="button"
+                disabled={isSubmitting}
+                onClick={() => {
+                  void handleResendVerificationCode();
+                }}
+                className="text-sm text-[#2d6a6a] hover:text-[#ff7b3d] font-semibold transition-colors disabled:opacity-60"
+              >
+                Gửi lại mã
+              </button>
+            </div>
+          )}
 
           <div className="mt-6 text-center">
             <button
