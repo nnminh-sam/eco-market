@@ -181,21 +181,18 @@ export function ProductDetail() {
       return;
     }
 
-    const conversationId = await startConversationWithSeller(
-      {
-        id: product.id,
-        name: product.name,
-        image: product.image,
-      },
-      product.seller,
-    );
+    const conversationId = await startConversationWithSeller(product.seller);
 
     if (!conversationId) {
       toast.error("Không thể mở cuộc trò chuyện lúc này");
       return;
     }
 
-    navigate(`/messages?conversation=${encodeURIComponent(conversationId)}`);
+    navigate(`/messages?conversation=${encodeURIComponent(conversationId)}`, {
+      state: {
+        initialDraft: `Mã sản phẩm: ${product.id} `,
+      },
+    });
     toast.success("Đã chuyển đến trang tin nhắn 💬");
   };
 

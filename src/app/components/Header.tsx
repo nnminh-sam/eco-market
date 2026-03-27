@@ -67,9 +67,13 @@ export function Header() {
                   <MessageCircle className="size-6 text-[#2d6a6a] group-hover:scale-110 transition-transform" />
                   <span className="font-semibold text-[#2d6a6a] hidden sm:inline">Tin nhắn</span>
                   {unreadCount > 0 && (
-                    <Badge className="absolute -top-1 -right-1 size-6 flex items-center justify-center p-0 text-xs bg-[#ff7b3d] border-2 border-white animate-bounce">
-                      {unreadCount}
-                    </Badge>
+                    <span className="absolute -top-0.5 -right-0.5 flex size-3.5">
+                      <span
+                        className="absolute inline-flex size-full rounded-full bg-[#ff7b3d]/50 animate-ping"
+                        style={{ animationDuration: "1.8s" }}
+                      />
+                      <span className="relative inline-flex size-3.5 rounded-full bg-[#ff7b3d] border-2 border-white" />
+                    </span>
                   )}
                 </Link>
                 <Link to="/post-ad">

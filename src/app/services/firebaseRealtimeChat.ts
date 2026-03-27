@@ -2,34 +2,27 @@ import { Message, User } from "../types/product";
 
 interface ConversationRecord {
   id: string;
-  buyerId: string;
-  sellerId: string;
-  buyerName: string;
-  sellerName: string;
-  productId: string;
-  productName: string;
-  productImage: string;
+  userAId?: string;
+  userBId?: string;
+  userAName?: string;
+  userBName?: string;
+  buyerId?: string;
+  sellerId?: string;
+  buyerName?: string;
+  sellerName?: string;
   createdAt: string;
   updatedAt: string;
 }
 
-interface ProductPreviewPayload {
-  id: string;
-  name: string;
-  image: string;
-}
-
 interface EnsureConversationPayload {
-  buyer: User;
-  seller: User;
-  product: ProductPreviewPayload;
+  currentUser: User;
+  otherUser: User;
 }
 
 interface SendMessagePayload {
   conversationId: string;
   senderId: string;
   receiverId: string;
-  productId: string;
   content: string;
 }
 
@@ -38,8 +31,6 @@ const rawDatabaseUrl =
 const firebaseDatabaseUrl = rawDatabaseUrl.trim().replace(/\/+$/g, "");
 const firebaseDatabaseAuthToken =
   (import.meta.env.VITE_FIREBASE_DATABASE_AUTH as string | undefined) ?? "";
-const fallbackProductImageUrl =
-  "https://images.unsplash.com/photo-1591369822096-ffd140ec948f?auto=format&fit=crop&w=600&q=80";
 
 export function isRealtimeChatConfigured() {
   return Boolean(firebaseDatabaseUrl);
@@ -98,7 +89,12 @@ function createMessageId() {
 export function buildConversationId(buyerId: string, sellerId: string) {
   const normalizedBuyerId = sanitizeRealtimeKey(buyerId);
   const normalizedSellerId = sanitizeRealtimeKey(sellerId);
-  return `${normalizedBuyerId}_${normalizedSellerId}`;
+  const [firstParticipantId, secondParticipantId] = [
+    normalizedBuyerId,
+    normalizedSellerId,
+  ].sort((firstId, secondId) => firstId.localeCompare(secondId));
+
+  return `${firstParticipantId}_${secondParticipantId}`;
 }
 
 export async function fetchUserConversationIds(userId: string) {
@@ -121,27 +117,29 @@ export async function fetchConversationRecord(conversationId: string) {
 }
 
 export async function ensureConversationRecord({
-  buyer,
-  seller,
-  product,
+  currentUser,
+  otherUser,
 }: EnsureConversationPayload) {
   if (!isRealtimeChatConfigured()) {
     throw new Error("Missing VITE_FIREBASE_DATABASE_URL.");
   }
 
-  const conversationId = buildConversationId(buyer.id, seller.id);
+  const conversationId = buildConversationId(currentUser.id, otherUser.id);
   const existingConversation = await fetchConversationRecord(conversationId);
   const timestamp = new Date().toISOString();
+  const [firstParticipant, secondParticipant] = [currentUser, otherUser].sort(
+    (firstUser, secondUser) =>
+      sanitizeRealtimeKey(firstUser.id).localeCompare(
+        sanitizeRealtimeKey(secondUser.id),
+      ),
+  );
 
   const conversationRecord: ConversationRecord = {
     id: conversationId,
-    buyerId: buyer.id,
-    sellerId: seller.id,
-    buyerName: buyer.name,
-    sellerName: seller.name,
-    productId: product.id,
-    productName: product.name,
-    productImage: product.image || fallbackProductImageUrl,
+    userAId: firstParticipant.id,
+    userBId: secondParticipant.id,
+    userAName: firstParticipant.name,
+    userBName: secondParticipant.name,
     createdAt: existingConversation?.createdAt ?? timestamp,
     updatedAt: timestamp,
   };
@@ -151,12 +149,12 @@ export async function ensureConversationRecord({
     body: JSON.stringify(conversationRecord),
   });
 
-  await requestFirebaseJson(`user_conversations/${sanitizeRealtimeKey(buyer.id)}/${conversationId}`, {
+  await requestFirebaseJson(`user_conversations/${sanitizeRealtimeKey(currentUser.id)}/${conversationId}`, {
     method: "PUT",
     body: JSON.stringify(true),
   });
 
-  await requestFirebaseJson(`user_conversations/${sanitizeRealtimeKey(seller.id)}/${conversationId}`, {
+  await requestFirebaseJson(`user_conversations/${sanitizeRealtimeKey(otherUser.id)}/${conversationId}`, {
     method: "PUT",
     body: JSON.stringify(true),
   });
@@ -194,7 +192,6 @@ export async function sendConversationMessage({
   conversationId,
   senderId,
   receiverId,
-  productId,
   content,
 }: SendMessagePayload) {
   if (!isRealtimeChatConfigured()) {
@@ -209,7 +206,6 @@ export async function sendConversationMessage({
     id: messageId,
     senderId,
     receiverId,
-    productId,
     content: normalizedContent,
     timestamp,
     read: false,

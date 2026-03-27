@@ -29,24 +29,15 @@ export interface Message {
   id: string;
   senderId: string;
   receiverId: string;
-  productId: string;
+  productId?: string;
   content: string;
   timestamp: string;
   read: boolean;
 }
 
-export interface ConversationProductPreview {
-  id: string;
-  name: string;
-  image: string;
-}
-
 export interface Conversation {
   id: string;
-  buyerId: string;
-  sellerId: string;
-  productId: string;
-  product: ConversationProductPreview;
+  participantIds: string[];
   otherUser: User;
   lastMessage: Message | null;
   unreadCount: number;

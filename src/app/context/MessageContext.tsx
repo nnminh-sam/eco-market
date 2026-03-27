@@ -22,28 +22,23 @@ import {
 
 interface MessageConversationRecord {
   id: string;
-  buyerId: string;
-  sellerId: string;
-  buyerName: string;
-  sellerName: string;
-  productId: string;
-  productName: string;
-  productImage: string;
+  userAId?: string;
+  userBId?: string;
+  userAName?: string;
+  userBName?: string;
+  buyerId?: string;
+  sellerId?: string;
+  buyerName?: string;
+  sellerName?: string;
   createdAt: string;
   updatedAt: string;
-}
-
-interface ProductPreview {
-  id: string;
-  name: string;
-  image: string;
 }
 
 interface MessageContextType {
   conversations: Conversation[];
   messages: Message[];
   sendMessage: (conversationId: string, content: string) => Promise<boolean>;
-  startConversationWithSeller: (product: ProductPreview, seller: User) => Promise<string | null>;
+  startConversationWithSeller: (seller: User) => Promise<string | null>;
   getConversationMessages: (conversationId: string) => Message[];
   markAsRead: (conversationId: string) => Promise<void>;
 }
@@ -188,6 +183,41 @@ export function MessageProvider({ children }: { children: ReactNode }) {
     refreshConversations,
   ]);
 
+  useEffect(() => {
+    if (!isAuthenticated || !currentUserId || !isRealtimeChatConfigured()) {
+      return;
+    }
+
+    const refreshAllMessageData = () => {
+      void refreshConversations();
+
+      conversationIds.forEach((conversationId) => {
+        void refreshConversationMessages(conversationId);
+      });
+    };
+
+    const pollingIntervalId = window.setInterval(() => {
+      refreshAllMessageData();
+    }, 3000);
+
+    const handleWindowFocus = () => {
+      refreshAllMessageData();
+    };
+
+    window.addEventListener("focus", handleWindowFocus);
+
+    return () => {
+      window.clearInterval(pollingIntervalId);
+      window.removeEventListener("focus", handleWindowFocus);
+    };
+  }, [
+    conversationIds,
+    currentUserId,
+    isAuthenticated,
+    refreshConversationMessages,
+    refreshConversations,
+  ]);
+
   const conversations = useMemo(() => {
     if (!currentUserId) {
       return [];
@@ -195,6 +225,15 @@ export function MessageProvider({ children }: { children: ReactNode }) {
 
     return Object.values(conversationRecords)
       .map((record) => {
+        const participantAId = record.userAId ?? record.buyerId ?? "";
+        const participantBId = record.userBId ?? record.sellerId ?? "";
+        const participantAName = record.userAName ?? record.buyerName ?? "";
+        const participantBName = record.userBName ?? record.sellerName ?? "";
+
+        if (!participantAId || !participantBId) {
+          return null;
+        }
+
         const conversationMessages = messagesByConversation[record.id] ?? [];
         const lastMessage =
           conversationMessages.length > 0
@@ -203,21 +242,16 @@ export function MessageProvider({ children }: { children: ReactNode }) {
         const unreadCount = conversationMessages.filter(
           (message) => message.receiverId === currentUserId && !message.read,
         ).length;
-        const isBuyer = currentUserId === record.buyerId;
+        const isCurrentUserParticipantA = currentUserId === participantAId;
 
         return {
           id: record.id,
-          buyerId: record.buyerId,
-          sellerId: record.sellerId,
-          productId: record.productId,
-          product: {
-            id: record.productId,
-            name: record.productName,
-            image: record.productImage,
-          },
+          participantIds: [participantAId, participantBId],
           otherUser: {
-            id: isBuyer ? record.sellerId : record.buyerId,
-            name: isBuyer ? record.sellerName : record.buyerName,
+            id: isCurrentUserParticipantA ? participantBId : participantAId,
+            name: isCurrentUserParticipantA
+              ? participantBName
+              : participantAName,
             email: "",
             joinedDate: new Date().toISOString(),
           },
@@ -225,13 +259,18 @@ export function MessageProvider({ children }: { children: ReactNode }) {
           unreadCount,
         } satisfies Conversation;
       })
+      .filter((conversation): conversation is Conversation => Boolean(conversation))
       .sort((firstConversation, secondConversation) => {
         const firstTimestamp =
           firstConversation.lastMessage?.timestamp ??
-          conversationRecords[firstConversation.id].updatedAt;
+          conversationRecords[firstConversation.id].updatedAt ??
+          conversationRecords[firstConversation.id].createdAt ??
+          new Date(0).toISOString();
         const secondTimestamp =
           secondConversation.lastMessage?.timestamp ??
-          conversationRecords[secondConversation.id].updatedAt;
+          conversationRecords[secondConversation.id].updatedAt ??
+          conversationRecords[secondConversation.id].createdAt ??
+          new Date(0).toISOString();
 
         return (
           new Date(secondTimestamp).getTime() - new Date(firstTimestamp).getTime()
@@ -260,15 +299,20 @@ export function MessageProvider({ children }: { children: ReactNode }) {
         return false;
       }
 
+      const participantAId = record.userAId ?? record.buyerId ?? "";
+      const participantBId = record.userBId ?? record.sellerId ?? "";
+      if (!participantAId || !participantBId) {
+        return false;
+      }
+
       const receiverId =
-        currentUserId === record.buyerId ? record.sellerId : record.buyerId;
+        currentUserId === participantAId ? participantBId : participantAId;
 
       try {
         await sendConversationMessage({
           conversationId,
           senderId: currentUserId,
           receiverId,
-          productId: record.productId,
           content: normalizedContent,
         });
         return true;
@@ -281,7 +325,7 @@ export function MessageProvider({ children }: { children: ReactNode }) {
   );
 
   const startConversationWithSeller = useCallback(
-    async (product: ProductPreview, seller: User) => {
+    async (seller: User) => {
       if (!isAuthenticated || !user?.id) {
         return null;
       }
@@ -292,9 +336,8 @@ export function MessageProvider({ children }: { children: ReactNode }) {
 
       try {
         const conversationId = await ensureConversationRecord({
-          buyer: user,
-          seller,
-          product,
+          currentUser: user,
+          otherUser: seller,
         });
 
         await refreshConversations();

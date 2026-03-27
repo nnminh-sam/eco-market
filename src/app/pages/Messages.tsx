@@ -11,12 +11,8 @@ import { User as UserType } from "../types/product";
 import { toast } from "sonner";
 
 interface MessagesLocationState {
-  product?: {
-    id: string;
-    name: string;
-    image: string;
-  };
   seller?: UserType;
+  initialDraft?: string;
 }
 
 export function Messages() {
@@ -37,6 +33,7 @@ export function Messages() {
   const messagePaneRef = useRef<HTMLDivElement | null>(null);
   const messageInputRef = useRef<HTMLInputElement | null>(null);
   const isSendingMessageRef = useRef(false);
+  const lastAppliedInitialDraftRef = useRef<string | null>(null);
   const locationState = location.state as MessagesLocationState | null;
   const requestedConversationId = searchParams.get("conversation");
 
@@ -56,19 +53,19 @@ export function Messages() {
       return;
     }
 
-    if (!locationState?.product || !locationState.seller) {
+    if (!locationState?.seller) {
       return;
     }
 
     const bootstrapConversation = async () => {
-      const conversationId = await startConversationWithSeller(
-        locationState.product,
-        locationState.seller,
-      );
+      const conversationId = await startConversationWithSeller(locationState.seller);
 
       if (conversationId) {
         navigate(`/messages?conversation=${encodeURIComponent(conversationId)}`, {
           replace: true,
+          state: {
+            initialDraft: locationState.initialDraft,
+          },
         });
         setSelectedConversation(conversationId);
       }
@@ -83,6 +80,30 @@ export function Messages() {
     startConversationWithSeller,
     user?.id,
   ]);
+
+  useEffect(() => {
+    if (!locationState?.initialDraft) {
+      return;
+    }
+
+    if (lastAppliedInitialDraftRef.current === locationState.initialDraft) {
+      return;
+    }
+
+    setMessageInput((currentDraft) =>
+      currentDraft.length > 0 ? currentDraft : locationState.initialDraft ?? "",
+    );
+    lastAppliedInitialDraftRef.current = locationState.initialDraft;
+
+    window.requestAnimationFrame(() => {
+      messageInputRef.current?.focus();
+      const inputElement = messageInputRef.current;
+      if (inputElement) {
+        const caretPosition = inputElement.value.length;
+        inputElement.setSelectionRange(caretPosition, caretPosition);
+      }
+    });
+  }, [locationState?.initialDraft]);
 
   useEffect(() => {
     if (conversationIds.length === 0) {
@@ -251,9 +272,6 @@ export function Messages() {
                             <p className="font-semibold truncate text-[#2f3e46] text-lg">
                               {conv.otherUser.name}
                             </p>
-                            <p className="text-sm text-gray-600 truncate font-medium">
-                              {conv.product.name}
-                            </p>
                             <p className="text-sm text-gray-500 truncate mt-1">
                               {conv.lastMessage?.content ?? "Chưa có tin nhắn"}
                             </p>
@@ -276,24 +294,19 @@ export function Messages() {
                   <>
                     {/* Header */}
                     <div className="shrink-0 p-6 border-b-2 border-[#2d6a6a]/10 bg-gradient-to-r from-[#2d6a6a]/5 to-transparent">
-                      <Link
-                        to={`/product/${currentConversation.productId}`}
-                        className="flex items-center gap-4 hover:opacity-80 transition-opacity group"
-                      >
-                        <img
-                          src={currentConversation.product.image}
-                          alt={currentConversation.product.name}
-                          className="size-16 object-cover rounded-xl shadow-md group-hover:scale-105 transition-transform"
-                        />
+                      <div className="flex items-center gap-4">
+                        <div className="size-16 bg-gradient-to-br from-[#2d6a6a] to-[#2d6a6a]/80 rounded-2xl flex items-center justify-center shadow-md">
+                          <User className="size-8 text-white" />
+                        </div>
                         <div>
                           <p className="font-semibold text-lg text-[#2f3e46]">
                             {currentConversation.otherUser.name}
                           </p>
                           <p className="text-sm text-gray-600 line-clamp-1">
-                            {currentConversation.product.name}
+                            Trò chuyện trực tiếp
                           </p>
                         </div>
-                      </Link>
+                      </div>
                     </div>
 
                     {/* Messages */}
