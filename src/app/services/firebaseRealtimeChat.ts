@@ -1,6 +1,8 @@
+import { FirebaseOptions, getApp, getApps, initializeApp } from "firebase/app";
+import { Database, get, getDatabase, onValue, ref, set, update } from "firebase/database";
 import { Message, User } from "../types/product";
 
-interface ConversationRecord {
+export interface ConversationRecord {
   id: string;
   userAId?: string;
   userBId?: string;
@@ -29,8 +31,67 @@ interface SendMessagePayload {
 const rawDatabaseUrl =
   (import.meta.env.VITE_FIREBASE_DATABASE_URL as string | undefined) ?? "";
 const firebaseDatabaseUrl = rawDatabaseUrl.trim().replace(/\/+$/g, "");
-const firebaseDatabaseAuthToken =
-  (import.meta.env.VITE_FIREBASE_DATABASE_AUTH as string | undefined) ?? "";
+const firebaseApiKey =
+  (import.meta.env.VITE_FIREBASE_API_KEY as string | undefined) ?? "";
+const firebaseAuthDomain =
+  (import.meta.env.VITE_FIREBASE_AUTH_DOMAIN as string | undefined) ?? "";
+const firebaseProjectId =
+  (import.meta.env.VITE_FIREBASE_PROJECT_ID as string | undefined) ?? "";
+const firebaseStorageBucket =
+  (import.meta.env.VITE_FIREBASE_STORAGE_BUCKET as string | undefined) ?? "";
+const firebaseMessagingSenderId =
+  (import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID as string | undefined) ?? "";
+const firebaseAppId =
+  (import.meta.env.VITE_FIREBASE_APP_ID as string | undefined) ?? "";
+
+let realtimeDatabaseInstance: Database | null = null;
+
+function buildFirebaseOptions(): FirebaseOptions {
+  const options: FirebaseOptions = {
+    databaseURL: firebaseDatabaseUrl,
+  };
+
+  if (firebaseApiKey) {
+    options.apiKey = firebaseApiKey;
+  }
+
+  if (firebaseAuthDomain) {
+    options.authDomain = firebaseAuthDomain;
+  }
+
+  if (firebaseProjectId) {
+    options.projectId = firebaseProjectId;
+  }
+
+  if (firebaseStorageBucket) {
+    options.storageBucket = firebaseStorageBucket;
+  }
+
+  if (firebaseMessagingSenderId) {
+    options.messagingSenderId = firebaseMessagingSenderId;
+  }
+
+  if (firebaseAppId) {
+    options.appId = firebaseAppId;
+  }
+
+  return options;
+}
+
+function getRealtimeDatabaseClient() {
+  if (!isRealtimeChatConfigured()) {
+    return null;
+  }
+
+  if (realtimeDatabaseInstance) {
+    return realtimeDatabaseInstance;
+  }
+
+  const app = getApps().length > 0 ? getApp() : initializeApp(buildFirebaseOptions());
+  realtimeDatabaseInstance = getDatabase(app, firebaseDatabaseUrl);
+
+  return realtimeDatabaseInstance;
+}
 
 export function isRealtimeChatConfigured() {
   return Boolean(firebaseDatabaseUrl);
@@ -40,46 +101,52 @@ function sanitizeRealtimeKey(rawValue: string) {
   return String(rawValue).trim().replace(/[.#$\[\]/]/g, "_");
 }
 
-function buildFirebasePath(path: string) {
-  const normalizedPath = path
-    .split("/")
-    .filter(Boolean)
-    .map((segment) => encodeURIComponent(segment))
-    .join("/");
+function normalizeConversationRecord(
+  rawRecord: ConversationRecord | null,
+): ConversationRecord | null {
+  if (!rawRecord || !rawRecord.id || !rawRecord.createdAt || !rawRecord.updatedAt) {
+    return null;
+  }
 
-  const query = firebaseDatabaseAuthToken
-    ? `?auth=${encodeURIComponent(firebaseDatabaseAuthToken)}`
-    : "";
-
-  return `${firebaseDatabaseUrl}/${normalizedPath}.json${query}`;
+  return {
+    id: rawRecord.id,
+    userAId: rawRecord.userAId,
+    userBId: rawRecord.userBId,
+    userAName: rawRecord.userAName,
+    userBName: rawRecord.userBName,
+    buyerId: rawRecord.buyerId,
+    sellerId: rawRecord.sellerId,
+    buyerName: rawRecord.buyerName,
+    sellerName: rawRecord.sellerName,
+    createdAt: rawRecord.createdAt,
+    updatedAt: rawRecord.updatedAt,
+  };
 }
 
-async function requestFirebaseJson<T>(
-  path: string,
-  init?: RequestInit,
-): Promise<T | null> {
-  if (!isRealtimeChatConfigured()) {
-    return null;
+function normalizeMessageRecord(rawMessage: Message, fallbackId: string): Message {
+  return {
+    id: rawMessage.id ?? fallbackId,
+    senderId: rawMessage.senderId,
+    receiverId: rawMessage.receiverId,
+    productId: rawMessage.productId,
+    content: rawMessage.content,
+    timestamp: rawMessage.timestamp,
+    read: Boolean(rawMessage.read),
+  };
+}
+
+function normalizeMessageCollection(rawMessages: Record<string, Message> | null) {
+  if (!rawMessages) {
+    return [];
   }
 
-  const response = await fetch(buildFirebasePath(path), {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...(init?.headers ?? {}),
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Firebase request failed: ${response.status}`);
-  }
-
-  const text = await response.text();
-  if (!text || text === "null") {
-    return null;
-  }
-
-  return JSON.parse(text) as T;
+  return Object.entries(rawMessages)
+    .map(([messageId, rawMessage]) => normalizeMessageRecord(rawMessage, messageId))
+    .sort(
+      (firstMessage, secondMessage) =>
+        new Date(firstMessage.timestamp).getTime() -
+        new Date(secondMessage.timestamp).getTime(),
+    );
 }
 
 function createMessageId() {
@@ -98,10 +165,16 @@ export function buildConversationId(buyerId: string, sellerId: string) {
 }
 
 export async function fetchUserConversationIds(userId: string) {
+  const database = getRealtimeDatabaseClient();
+  if (!database) {
+    return [];
+  }
+
   const normalizedUserId = sanitizeRealtimeKey(userId);
-  const payload = await requestFirebaseJson<Record<string, boolean>>(
-    `user_conversations/${normalizedUserId}`,
+  const snapshot = await get(
+    ref(database, `user_conversations/${normalizedUserId}`),
   );
+  const payload = snapshot.val() as Record<string, boolean> | null;
 
   if (!payload) {
     return [];
@@ -113,14 +186,23 @@ export async function fetchUserConversationIds(userId: string) {
 }
 
 export async function fetchConversationRecord(conversationId: string) {
-  return requestFirebaseJson<ConversationRecord>(`conversations/${conversationId}`);
+  const database = getRealtimeDatabaseClient();
+  if (!database) {
+    return null;
+  }
+
+  const snapshot = await get(ref(database, `conversations/${conversationId}`));
+  const record = snapshot.val() as ConversationRecord | null;
+
+  return normalizeConversationRecord(record);
 }
 
 export async function ensureConversationRecord({
   currentUser,
   otherUser,
 }: EnsureConversationPayload) {
-  if (!isRealtimeChatConfigured()) {
+  const database = getRealtimeDatabaseClient();
+  if (!database) {
     throw new Error("Missing VITE_FIREBASE_DATABASE_URL.");
   }
 
@@ -144,48 +226,38 @@ export async function ensureConversationRecord({
     updatedAt: timestamp,
   };
 
-  await requestFirebaseJson(`conversations/${conversationId}`, {
-    method: "PUT",
-    body: JSON.stringify(conversationRecord),
-  });
+  await set(ref(database, `conversations/${conversationId}`), conversationRecord);
 
-  await requestFirebaseJson(`user_conversations/${sanitizeRealtimeKey(currentUser.id)}/${conversationId}`, {
-    method: "PUT",
-    body: JSON.stringify(true),
-  });
-
-  await requestFirebaseJson(`user_conversations/${sanitizeRealtimeKey(otherUser.id)}/${conversationId}`, {
-    method: "PUT",
-    body: JSON.stringify(true),
-  });
+  await Promise.all([
+    set(
+      ref(
+        database,
+        `user_conversations/${sanitizeRealtimeKey(currentUser.id)}/${conversationId}`,
+      ),
+      true,
+    ),
+    set(
+      ref(
+        database,
+        `user_conversations/${sanitizeRealtimeKey(otherUser.id)}/${conversationId}`,
+      ),
+      true,
+    ),
+  ]);
 
   return conversationId;
 }
 
 export async function fetchConversationMessages(conversationId: string) {
-  const payload = await requestFirebaseJson<Record<string, Message>>(
-    `messages/${conversationId}`,
-  );
-
-  if (!payload) {
+  const database = getRealtimeDatabaseClient();
+  if (!database) {
     return [];
   }
 
-  return Object.values(payload)
-    .map((message) => ({
-      id: message.id,
-      senderId: message.senderId,
-      receiverId: message.receiverId,
-      productId: message.productId,
-      content: message.content,
-      timestamp: message.timestamp,
-      read: Boolean(message.read),
-    }))
-    .sort(
-      (firstMessage, secondMessage) =>
-        new Date(firstMessage.timestamp).getTime() -
-        new Date(secondMessage.timestamp).getTime(),
-    );
+  const snapshot = await get(ref(database, `messages/${conversationId}`));
+  const payload = snapshot.val() as Record<string, Message> | null;
+
+  return normalizeMessageCollection(payload);
 }
 
 export async function sendConversationMessage({
@@ -194,7 +266,8 @@ export async function sendConversationMessage({
   receiverId,
   content,
 }: SendMessagePayload) {
-  if (!isRealtimeChatConfigured()) {
+  const database = getRealtimeDatabaseClient();
+  if (!database) {
     throw new Error("Missing VITE_FIREBASE_DATABASE_URL.");
   }
 
@@ -211,17 +284,11 @@ export async function sendConversationMessage({
     read: false,
   };
 
-  await requestFirebaseJson(`messages/${conversationId}/${messageId}`, {
-    method: "PUT",
-    body: JSON.stringify(message),
-  });
+  await set(ref(database, `messages/${conversationId}/${messageId}`), message);
 
   try {
-    await requestFirebaseJson(`conversations/${conversationId}`, {
-      method: "PATCH",
-      body: JSON.stringify({
-        updatedAt: timestamp,
-      }),
+    await update(ref(database, `conversations/${conversationId}`), {
+      updatedAt: timestamp,
     });
   } catch (error) {
     console.warn("[messages] Could not update conversation metadata:", error);
@@ -231,73 +298,65 @@ export async function sendConversationMessage({
 }
 
 export async function markMessageAsRead(conversationId: string, messageId: string) {
-  if (!isRealtimeChatConfigured()) {
+  const database = getRealtimeDatabaseClient();
+  if (!database) {
     throw new Error("Missing VITE_FIREBASE_DATABASE_URL.");
   }
 
-  await requestFirebaseJson(`messages/${conversationId}/${messageId}`, {
-    method: "PATCH",
-    body: JSON.stringify({
-      read: true,
-    }),
+  await update(ref(database, `messages/${conversationId}/${messageId}`), {
+    read: true,
   });
 }
 
-export function subscribeRealtimePath(path: string, onChange: () => void) {
-  if (typeof window === "undefined" || !isRealtimeChatConfigured()) {
+export function subscribeRealtimePath(
+  path: string,
+  onChange: (snapshotValue: unknown) => void,
+) {
+  if (typeof window === "undefined") {
     return () => {
       return;
     };
   }
 
-  const eventSource = new EventSource(buildFirebasePath(path));
-  let pollingIntervalId: number | null = null;
-
-  const stopPolling = () => {
-    if (pollingIntervalId === null) {
+  const database = getRealtimeDatabaseClient();
+  if (!database) {
+    return () => {
       return;
-    }
+    };
+  }
 
-    window.clearInterval(pollingIntervalId);
-    pollingIntervalId = null;
-  };
+  const pathRef = ref(database, path);
+  return onValue(
+    pathRef,
+    (snapshot) => {
+      onChange(snapshot.val());
+    },
+    (error) => {
+      console.error(`[messages] Realtime subscription error at "${path}":`, error);
+    },
+  );
+}
 
-  const startPolling = () => {
-    if (pollingIntervalId !== null) {
-      return;
-    }
+export function subscribeConversationRecord(
+  conversationId: string,
+  onRecordChange: (record: ConversationRecord | null) => void,
+) {
+  return subscribeRealtimePath(`conversations/${conversationId}`, (snapshotValue) => {
+    const record = normalizeConversationRecord(
+      snapshotValue as ConversationRecord | null,
+    );
+    onRecordChange(record);
+  });
+}
 
-    pollingIntervalId = window.setInterval(() => {
-      onChange();
-    }, 3000);
-  };
-
-  const handler = () => {
-    onChange();
-  };
-
-  const handleOpen = () => {
-    stopPolling();
-  };
-
-  const handleError = () => {
-    startPolling();
-  };
-
-  const typedHandler = handler as EventListener;
-  eventSource.addEventListener("put", typedHandler);
-  eventSource.addEventListener("patch", typedHandler);
-  eventSource.addEventListener("open", handleOpen as EventListener);
-  eventSource.addEventListener("error", handleError as EventListener);
-
-  onChange();
-
-  return () => {
-    eventSource.removeEventListener("put", typedHandler);
-    eventSource.removeEventListener("patch", typedHandler);
-    eventSource.removeEventListener("open", handleOpen as EventListener);
-    eventSource.removeEventListener("error", handleError as EventListener);
-    eventSource.close();
-    stopPolling();
-  };
+export function subscribeConversationMessages(
+  conversationId: string,
+  onMessagesChange: (messages: Message[]) => void,
+) {
+  return subscribeRealtimePath(`messages/${conversationId}`, (snapshotValue) => {
+    const messages = normalizeMessageCollection(
+      snapshotValue as Record<string, Message> | null,
+    );
+    onMessagesChange(messages);
+  });
 }

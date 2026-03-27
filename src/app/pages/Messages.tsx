@@ -37,6 +37,17 @@ export function Messages() {
   const locationState = location.state as MessagesLocationState | null;
   const requestedConversationId = searchParams.get("conversation");
 
+  const focusMessageInput = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      messageInputRef.current?.focus();
+      const inputElement = messageInputRef.current;
+      if (inputElement) {
+        const caretPosition = inputElement.value.length;
+        inputElement.setSelectionRange(caretPosition, caretPosition);
+      }
+    });
+  }, []);
+
   const conversationIds = useMemo(
     () => conversations.map((conversation) => conversation.id),
     [conversations],
@@ -95,15 +106,8 @@ export function Messages() {
     );
     lastAppliedInitialDraftRef.current = locationState.initialDraft;
 
-    window.requestAnimationFrame(() => {
-      messageInputRef.current?.focus();
-      const inputElement = messageInputRef.current;
-      if (inputElement) {
-        const caretPosition = inputElement.value.length;
-        inputElement.setSelectionRange(caretPosition, caretPosition);
-      }
-    });
-  }, [locationState?.initialDraft]);
+    focusMessageInput();
+  }, [focusMessageInput, locationState?.initialDraft]);
 
   useEffect(() => {
     if (conversationIds.length === 0) {
@@ -189,35 +193,26 @@ export function Messages() {
     setIsSendingMessage(true);
     setMessageInput("");
 
-    const sent = await sendMessage(currentConversation.id, nextMessage);
+    let sent = false;
 
-    if (sent) {
+    try {
+      sent = await sendMessage(currentConversation.id, nextMessage);
+    } catch (error) {
+      console.error("[messages] Unexpected send error:", error);
+    } finally {
       isSendingMessageRef.current = false;
       setIsSendingMessage(false);
-      window.requestAnimationFrame(() => {
-        messageInputRef.current?.focus();
-        const inputElement = messageInputRef.current;
-        if (inputElement) {
-          const caretPosition = inputElement.value.length;
-          inputElement.setSelectionRange(caretPosition, caretPosition);
-        }
-      });
+    }
+
+    if (sent) {
+      focusMessageInput();
       return;
     }
 
     setMessageInput((currentValue) =>
       currentValue.length === 0 ? nextMessage : currentValue,
     );
-    isSendingMessageRef.current = false;
-    setIsSendingMessage(false);
-    window.requestAnimationFrame(() => {
-      messageInputRef.current?.focus();
-      const inputElement = messageInputRef.current;
-      if (inputElement) {
-        const caretPosition = inputElement.value.length;
-        inputElement.setSelectionRange(caretPosition, caretPosition);
-      }
-    });
+    focusMessageInput();
 
     toast.error("Không thể gửi tin nhắn. Vui lòng thử lại.");
   };

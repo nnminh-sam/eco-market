@@ -11,12 +11,13 @@ import { Conversation, Message, User } from "../types/product";
 import { useAuth } from "./AuthContext";
 import {
   ensureConversationRecord,
-  fetchConversationMessages,
   fetchConversationRecord,
   fetchUserConversationIds,
   isRealtimeChatConfigured,
   markMessageAsRead,
   sendConversationMessage,
+  subscribeConversationMessages,
+  subscribeConversationRecord,
   subscribeRealtimePath,
 } from "../services/firebaseRealtimeChat";
 
@@ -105,25 +106,6 @@ export function MessageProvider({ children }: { children: ReactNode }) {
     }
   }, [currentUserId, isAuthenticated]);
 
-  const refreshConversationMessages = useCallback(
-    async (conversationId: string) => {
-      if (!isAuthenticated || !currentUserId || !conversationRecords[conversationId]) {
-        return;
-      }
-
-      try {
-        const fetchedMessages = await fetchConversationMessages(conversationId);
-        setMessagesByConversation((previous) => ({
-          ...previous,
-          [conversationId]: fetchedMessages,
-        }));
-      } catch (error) {
-        console.error("[messages] Could not refresh messages:", error);
-      }
-    },
-    [conversationRecords, currentUserId, isAuthenticated],
-  );
-
   useEffect(() => {
     void refreshConversations();
 
@@ -153,21 +135,35 @@ export function MessageProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    conversationIds.forEach((conversationId) => {
-      void refreshConversationMessages(conversationId);
-    });
-
     const unsubscribeFromConversationMessages = conversationIds.map(
       (conversationId) =>
-        subscribeRealtimePath(`messages/${conversationId}`, () => {
-          void refreshConversationMessages(conversationId);
+        subscribeConversationMessages(conversationId, (nextMessages) => {
+          setMessagesByConversation((previous) => ({
+            ...previous,
+            [conversationId]: nextMessages,
+          }));
         }),
     );
 
     const unsubscribeFromConversationMetadata = conversationIds.map(
       (conversationId) =>
-        subscribeRealtimePath(`conversations/${conversationId}`, () => {
-          void refreshConversations();
+        subscribeConversationRecord(conversationId, (record) => {
+          setConversationRecords((previous) => {
+            if (!record) {
+              if (!previous[conversationId]) {
+                return previous;
+              }
+
+              const { [conversationId]: _removedConversation, ...nextRecords } =
+                previous;
+              return nextRecords;
+            }
+
+            return {
+              ...previous,
+              [conversationId]: record,
+            };
+          });
         }),
     );
 
@@ -179,43 +175,6 @@ export function MessageProvider({ children }: { children: ReactNode }) {
     conversationIds,
     currentUserId,
     isAuthenticated,
-    refreshConversationMessages,
-    refreshConversations,
-  ]);
-
-  useEffect(() => {
-    if (!isAuthenticated || !currentUserId || !isRealtimeChatConfigured()) {
-      return;
-    }
-
-    const refreshAllMessageData = () => {
-      void refreshConversations();
-
-      conversationIds.forEach((conversationId) => {
-        void refreshConversationMessages(conversationId);
-      });
-    };
-
-    const pollingIntervalId = window.setInterval(() => {
-      refreshAllMessageData();
-    }, 3000);
-
-    const handleWindowFocus = () => {
-      refreshAllMessageData();
-    };
-
-    window.addEventListener("focus", handleWindowFocus);
-
-    return () => {
-      window.clearInterval(pollingIntervalId);
-      window.removeEventListener("focus", handleWindowFocus);
-    };
-  }, [
-    conversationIds,
-    currentUserId,
-    isAuthenticated,
-    refreshConversationMessages,
-    refreshConversations,
   ]);
 
   const conversations = useMemo(() => {
@@ -309,12 +268,44 @@ export function MessageProvider({ children }: { children: ReactNode }) {
         currentUserId === participantAId ? participantBId : participantAId;
 
       try {
-        await sendConversationMessage({
+        const sentMessage = await sendConversationMessage({
           conversationId,
           senderId: currentUserId,
           receiverId,
           content: normalizedContent,
         });
+
+        setMessagesByConversation((previous) => {
+          const conversationMessages = previous[conversationId] ?? [];
+          if (
+            conversationMessages.some(
+              (existingMessage) => existingMessage.id === sentMessage.id,
+            )
+          ) {
+            return previous;
+          }
+
+          return {
+            ...previous,
+            [conversationId]: [...conversationMessages, sentMessage],
+          };
+        });
+
+        setConversationRecords((previous) => {
+          const currentRecord = previous[conversationId];
+          if (!currentRecord) {
+            return previous;
+          }
+
+          return {
+            ...previous,
+            [conversationId]: {
+              ...currentRecord,
+              updatedAt: sentMessage.timestamp,
+            },
+          };
+        });
+
         return true;
       } catch (error) {
         console.error("[messages] Could not send message:", error);
