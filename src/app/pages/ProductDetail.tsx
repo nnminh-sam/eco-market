@@ -32,6 +32,7 @@ import {
 } from "../components/ui/select";
 import { useAuth } from "../context/AuthContext";
 import { useCart } from "../context/CartContext";
+import { useMessages } from "../context/MessageContext";
 import { useWishlist } from "../context/WishlistContext";
 import { toast } from "sonner";
 import { Product } from "../types/product";
@@ -80,6 +81,7 @@ export function ProductDetail() {
   const id = params?.id;
   const { isAuthenticated, user } = useAuth();
   const { addToCart, getItemQuantity } = useCart();
+  const { startConversationWithSeller } = useMessages();
   const { isInWishlist, toggleWishlist } = useWishlist();
   const [product, setProduct] = useState<Product | null>(null);
   const [isLoadingProduct, setIsLoadingProduct] = useState(true);
@@ -167,13 +169,33 @@ export function ProductDetail() {
     return new Date(dateString).toLocaleDateString("vi-VN");
   };
 
-  const handleContactSeller = () => {
+  const handleContactSeller = async () => {
     if (!isAuthenticated) {
       toast.error("Vui lòng đăng nhập để liên hệ người bán");
       navigate("/login");
       return;
     }
-    navigate("/messages");
+
+    if (user?.id === product.seller.id) {
+      toast.error("Bạn không thể nhắn tin cho chính mình");
+      return;
+    }
+
+    const conversationId = await startConversationWithSeller(
+      {
+        id: product.id,
+        name: product.name,
+        image: product.image,
+      },
+      product.seller,
+    );
+
+    if (!conversationId) {
+      toast.error("Không thể mở cuộc trò chuyện lúc này");
+      return;
+    }
+
+    navigate(`/messages?conversation=${encodeURIComponent(conversationId)}`);
     toast.success("Đã chuyển đến trang tin nhắn 💬");
   };
 

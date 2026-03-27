@@ -35,11 +35,19 @@ export interface Message {
   read: boolean;
 }
 
+export interface ConversationProductPreview {
+  id: string;
+  name: string;
+  image: string;
+}
+
 export interface Conversation {
   id: string;
+  buyerId: string;
+  sellerId: string;
   productId: string;
-  product: Product;
+  product: ConversationProductPreview;
   otherUser: User;
-  lastMessage: Message;
+  lastMessage: Message | null;
   unreadCount: number;
 }

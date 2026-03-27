@@ -1,45 +1,353 @@
-import { createContext, useContext, useState, ReactNode } from "react";
-import { Message, Conversation } from "../types/product";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  ReactNode,
+} from "react";
+import { Conversation, Message, User } from "../types/product";
+import { useAuth } from "./AuthContext";
+import {
+  ensureConversationRecord,
+  fetchConversationMessages,
+  fetchConversationRecord,
+  fetchUserConversationIds,
+  isRealtimeChatConfigured,
+  markMessageAsRead,
+  sendConversationMessage,
+  subscribeRealtimePath,
+} from "../services/firebaseRealtimeChat";
+
+interface MessageConversationRecord {
+  id: string;
+  buyerId: string;
+  sellerId: string;
+  buyerName: string;
+  sellerName: string;
+  productId: string;
+  productName: string;
+  productImage: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface ProductPreview {
+  id: string;
+  name: string;
+  image: string;
+}
 
 interface MessageContextType {
   conversations: Conversation[];
   messages: Message[];
-  sendMessage: (productId: string, receiverId: string, content: string) => void;
+  sendMessage: (conversationId: string, content: string) => Promise<void>;
+  startConversationWithSeller: (product: ProductPreview, seller: User) => Promise<string | null>;
   getConversationMessages: (conversationId: string) => Message[];
-  markAsRead: (conversationId: string) => void;
+  markAsRead: (conversationId: string) => Promise<void>;
 }
 
 const MessageContext = createContext<MessageContextType | undefined>(undefined);
 
 export function MessageProvider({ children }: { children: ReactNode }) {
-  const [messages, setMessages] = useState<Message[]>([]);
+  const { user, isAuthenticated } = useAuth();
+  const [conversationRecords, setConversationRecords] = useState<
+    Record<string, MessageConversationRecord>
+  >({});
+  const [messagesByConversation, setMessagesByConversation] = useState<
+    Record<string, Message[]>
+  >({});
 
-  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const currentUserId = user?.id ?? "";
 
-  const sendMessage = (productId: string, receiverId: string, content: string) => {
-    const newMessage: Message = {
-      id: `msg-${Date.now()}`,
-      senderId: "1", // Mock current user
-      receiverId,
-      productId,
-      content,
-      timestamp: new Date().toISOString(),
-      read: false
-    };
-    setMessages((prev) => [...prev, newMessage]);
-  };
+  const refreshConversations = useCallback(async () => {
+    if (!isAuthenticated || !currentUserId) {
+      setConversationRecords({});
+      setMessagesByConversation({});
+      return;
+    }
 
-  const getConversationMessages = (conversationId: string): Message[] => {
-    const conv = conversations.find((c) => c.id === conversationId);
-    if (!conv) return [];
-    return messages.filter((m) => m.productId === conv.productId);
-  };
+    if (!isRealtimeChatConfigured()) {
+      setConversationRecords({});
+      setMessagesByConversation({});
+      return;
+    }
 
-  const markAsRead = (conversationId: string) => {
-    setConversations((prev) =>
-      prev.map((c) => (c.id === conversationId ? { ...c, unreadCount: 0 } : c))
+    try {
+      const conversationIds = await fetchUserConversationIds(currentUserId);
+      const records = await Promise.all(
+        conversationIds.map(async (conversationId) => {
+          const record = await fetchConversationRecord(conversationId);
+          return record;
+        }),
+      );
+
+      const nextRecords = records.reduce<Record<string, MessageConversationRecord>>(
+        (accumulator, record) => {
+          if (!record) {
+            return accumulator;
+          }
+
+          accumulator[record.id] = record;
+          return accumulator;
+        },
+        {},
+      );
+
+      setConversationRecords(nextRecords);
+      setMessagesByConversation((previous) => {
+        const keptMessages: Record<string, Message[]> = {};
+
+        Object.keys(nextRecords).forEach((conversationId) => {
+          keptMessages[conversationId] = previous[conversationId] ?? [];
+        });
+
+        return keptMessages;
+      });
+    } catch (error) {
+      console.error("[messages] Could not refresh conversations:", error);
+    }
+  }, [currentUserId, isAuthenticated]);
+
+  const refreshConversationMessages = useCallback(
+    async (conversationId: string) => {
+      if (!isAuthenticated || !currentUserId || !conversationRecords[conversationId]) {
+        return;
+      }
+
+      try {
+        const fetchedMessages = await fetchConversationMessages(conversationId);
+        setMessagesByConversation((previous) => ({
+          ...previous,
+          [conversationId]: fetchedMessages,
+        }));
+      } catch (error) {
+        console.error("[messages] Could not refresh messages:", error);
+      }
+    },
+    [conversationRecords, currentUserId, isAuthenticated],
+  );
+
+  useEffect(() => {
+    void refreshConversations();
+
+    if (!isAuthenticated || !currentUserId || !isRealtimeChatConfigured()) {
+      return;
+    }
+
+    const unsubscribeFromConversationIndex = subscribeRealtimePath(
+      `user_conversations/${currentUserId}`,
+      () => {
+        void refreshConversations();
+      },
     );
-  };
+
+    return () => {
+      unsubscribeFromConversationIndex();
+    };
+  }, [currentUserId, isAuthenticated, refreshConversations]);
+
+  const conversationIds = useMemo(
+    () => Object.keys(conversationRecords),
+    [conversationRecords],
+  );
+
+  useEffect(() => {
+    if (!isAuthenticated || !currentUserId || conversationIds.length === 0) {
+      return;
+    }
+
+    conversationIds.forEach((conversationId) => {
+      void refreshConversationMessages(conversationId);
+    });
+
+    const unsubscribeFromConversationMessages = conversationIds.map(
+      (conversationId) =>
+        subscribeRealtimePath(`messages/${conversationId}`, () => {
+          void refreshConversationMessages(conversationId);
+        }),
+    );
+
+    const unsubscribeFromConversationMetadata = conversationIds.map(
+      (conversationId) =>
+        subscribeRealtimePath(`conversations/${conversationId}`, () => {
+          void refreshConversations();
+        }),
+    );
+
+    return () => {
+      unsubscribeFromConversationMessages.forEach((unsubscribe) => unsubscribe());
+      unsubscribeFromConversationMetadata.forEach((unsubscribe) => unsubscribe());
+    };
+  }, [
+    conversationIds,
+    currentUserId,
+    isAuthenticated,
+    refreshConversationMessages,
+    refreshConversations,
+  ]);
+
+  const conversations = useMemo(() => {
+    if (!currentUserId) {
+      return [];
+    }
+
+    return Object.values(conversationRecords)
+      .map((record) => {
+        const conversationMessages = messagesByConversation[record.id] ?? [];
+        const lastMessage =
+          conversationMessages.length > 0
+            ? conversationMessages[conversationMessages.length - 1]
+            : null;
+        const unreadCount = conversationMessages.filter(
+          (message) => message.receiverId === currentUserId && !message.read,
+        ).length;
+        const isBuyer = currentUserId === record.buyerId;
+
+        return {
+          id: record.id,
+          buyerId: record.buyerId,
+          sellerId: record.sellerId,
+          productId: record.productId,
+          product: {
+            id: record.productId,
+            name: record.productName,
+            image: record.productImage,
+          },
+          otherUser: {
+            id: isBuyer ? record.sellerId : record.buyerId,
+            name: isBuyer ? record.sellerName : record.buyerName,
+            email: "",
+            joinedDate: new Date().toISOString(),
+          },
+          lastMessage,
+          unreadCount,
+        } satisfies Conversation;
+      })
+      .sort((firstConversation, secondConversation) => {
+        const firstTimestamp =
+          firstConversation.lastMessage?.timestamp ??
+          conversationRecords[firstConversation.id].updatedAt;
+        const secondTimestamp =
+          secondConversation.lastMessage?.timestamp ??
+          conversationRecords[secondConversation.id].updatedAt;
+
+        return (
+          new Date(secondTimestamp).getTime() - new Date(firstTimestamp).getTime()
+        );
+      });
+  }, [conversationRecords, currentUserId, messagesByConversation]);
+
+  const messages = useMemo(
+    () => Object.values(messagesByConversation).flat(),
+    [messagesByConversation],
+  );
+
+  const sendMessage = useCallback(
+    async (conversationId: string, content: string) => {
+      if (!isAuthenticated || !currentUserId) {
+        return;
+      }
+
+      const normalizedContent = content.trim();
+      if (!normalizedContent) {
+        return;
+      }
+
+      const record = conversationRecords[conversationId];
+      if (!record) {
+        return;
+      }
+
+      const receiverId =
+        currentUserId === record.buyerId ? record.sellerId : record.buyerId;
+
+      try {
+        await sendConversationMessage({
+          conversationId,
+          senderId: currentUserId,
+          receiverId,
+          productId: record.productId,
+          content: normalizedContent,
+        });
+      } catch (error) {
+        console.error("[messages] Could not send message:", error);
+      }
+    },
+    [conversationRecords, currentUserId, isAuthenticated],
+  );
+
+  const startConversationWithSeller = useCallback(
+    async (product: ProductPreview, seller: User) => {
+      if (!isAuthenticated || !user?.id) {
+        return null;
+      }
+
+      if (user.id === seller.id) {
+        return null;
+      }
+
+      try {
+        const conversationId = await ensureConversationRecord({
+          buyer: user,
+          seller,
+          product,
+        });
+
+        await refreshConversations();
+        return conversationId;
+      } catch (error) {
+        console.error("[messages] Could not start conversation:", error);
+        return null;
+      }
+    },
+    [isAuthenticated, refreshConversations, user],
+  );
+
+  const getConversationMessages = useCallback(
+    (conversationId: string): Message[] => {
+      return messagesByConversation[conversationId] ?? [];
+    },
+    [messagesByConversation],
+  );
+
+  const markAsRead = useCallback(
+    async (conversationId: string) => {
+      if (!currentUserId) {
+        return;
+      }
+
+      const unreadMessages = (messagesByConversation[conversationId] ?? []).filter(
+        (message) => message.receiverId === currentUserId && !message.read,
+      );
+
+      if (unreadMessages.length === 0) {
+        return;
+      }
+
+      try {
+        await Promise.all(
+          unreadMessages.map((message) =>
+            markMessageAsRead(conversationId, message.id),
+          ),
+        );
+      } catch (error) {
+        console.error("[messages] Could not mark messages as read:", error);
+        return;
+      }
+
+      setMessagesByConversation((previous) => ({
+        ...previous,
+        [conversationId]: (previous[conversationId] ?? []).map((message) =>
+          message.receiverId === currentUserId
+            ? { ...message, read: true }
+            : message,
+        ),
+      }));
+    },
+    [currentUserId, messagesByConversation],
+  );
 
   return (
     <MessageContext.Provider
@@ -47,6 +355,7 @@ export function MessageProvider({ children }: { children: ReactNode }) {
         conversations,
         messages,
         sendMessage,
+        startConversationWithSeller,
         getConversationMessages,
         markAsRead,
       }}

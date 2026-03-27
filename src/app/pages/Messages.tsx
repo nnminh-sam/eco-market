@@ -1,5 +1,5 @@
-import { FormEvent, useEffect, useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useMessages } from "../context/MessageContext";
 import { Button } from "../components/ui/button";
@@ -7,19 +7,112 @@ import { Input } from "../components/ui/input";
 import { Card, CardContent } from "../components/ui/card";
 import { ArrowLeft, Send, User, Smile } from "lucide-react";
 import { ScrollArea } from "../components/ui/scroll-area";
+import { User as UserType } from "../types/product";
+
+interface MessagesLocationState {
+  product?: {
+    id: string;
+    name: string;
+    image: string;
+  };
+  seller?: UserType;
+}
 
 export function Messages() {
   const { isAuthenticated, user } = useAuth();
-  const { conversations, getConversationMessages, sendMessage } = useMessages();
+  const {
+    conversations,
+    getConversationMessages,
+    sendMessage,
+    startConversationWithSeller,
+    markAsRead,
+  } = useMessages();
   const navigate = useNavigate();
+  const location = useLocation();
+  const [searchParams] = useSearchParams();
   const [selectedConversation, setSelectedConversation] = useState(conversations[0]?.id || null);
   const [messageInput, setMessageInput] = useState("");
+  const locationState = location.state as MessagesLocationState | null;
+  const requestedConversationId = searchParams.get("conversation");
+
+  const conversationIds = useMemo(
+    () => conversations.map((conversation) => conversation.id),
+    [conversations],
+  );
 
   useEffect(() => {
     if (!isAuthenticated) {
       navigate("/login");
     }
   }, [isAuthenticated, navigate]);
+
+  useEffect(() => {
+    if (!isAuthenticated || !user?.id) {
+      return;
+    }
+
+    if (!locationState?.product || !locationState.seller) {
+      return;
+    }
+
+    const bootstrapConversation = async () => {
+      const conversationId = await startConversationWithSeller(
+        locationState.product,
+        locationState.seller,
+      );
+
+      if (conversationId) {
+        navigate(`/messages?conversation=${encodeURIComponent(conversationId)}`, {
+          replace: true,
+        });
+        setSelectedConversation(conversationId);
+      }
+    };
+
+    void bootstrapConversation();
+  }, [
+    isAuthenticated,
+    location.pathname,
+    locationState,
+    navigate,
+    startConversationWithSeller,
+    user?.id,
+  ]);
+
+  useEffect(() => {
+    if (conversationIds.length === 0) {
+      setSelectedConversation(null);
+      return;
+    }
+
+    if (requestedConversationId && conversationIds.includes(requestedConversationId)) {
+      setSelectedConversation(requestedConversationId);
+      return;
+    }
+
+    setSelectedConversation((previous) => {
+      if (previous && conversationIds.includes(previous)) {
+        return previous;
+      }
+
+      return conversationIds[0];
+    });
+  }, [conversationIds, requestedConversationId]);
+
+  const handleSelectConversation = (conversationId: string) => {
+    setSelectedConversation(conversationId);
+    navigate(`/messages?conversation=${encodeURIComponent(conversationId)}`, {
+      replace: true,
+    });
+  };
+
+  useEffect(() => {
+    if (!selectedConversation) {
+      return;
+    }
+
+    void markAsRead(selectedConversation);
+  }, [markAsRead, selectedConversation]);
 
   if (!isAuthenticated) {
     return null;
@@ -32,11 +125,7 @@ export function Messages() {
     e.preventDefault();
     if (!messageInput.trim() || !currentConversation) return;
 
-    sendMessage(
-      currentConversation.productId,
-      currentConversation.otherUser.id,
-      messageInput
-    );
+    void sendMessage(currentConversation.id, messageInput);
     setMessageInput("");
   };
 
@@ -75,7 +164,7 @@ export function Messages() {
                     conversations.map((conv) => (
                       <button
                         key={conv.id}
-                        onClick={() => setSelectedConversation(conv.id)}
+                        onClick={() => handleSelectConversation(conv.id)}
                         className={`w-full p-5 border-b hover:bg-[#2d6a6a]/5 text-left transition-all ${
                           selectedConversation === conv.id 
                             ? "bg-gradient-to-r from-[#2d6a6a]/10 to-[#ff7b3d]/5 border-l-4 border-l-[#ff7b3d]" 
@@ -94,7 +183,7 @@ export function Messages() {
                               {conv.product.name}
                             </p>
                             <p className="text-sm text-gray-500 truncate mt-1">
-                              {conv.lastMessage.content}
+                              {conv.lastMessage?.content ?? "Chưa có tin nhắn"}
                             </p>
                           </div>
                           {conv.unreadCount > 0 && (
