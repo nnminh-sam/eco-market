@@ -957,8 +957,13 @@ function sendJson(res, statusCode, payload) {
 }
 
 function sendFile(res, statusCode, body, contentType) {
+  const cacheControl = statusCode >= 400 || contentType.startsWith("text/html")
+    ? "no-store"
+    : "public, max-age=31536000, immutable";
+
   res.writeHead(statusCode, {
     "Content-Type": contentType,
+    "Cache-Control": cacheControl,
   });
   res.end(body);
 }
@@ -1184,6 +1189,7 @@ async function handleSignUp(req, res) {
   }
 
   const verificationCode = generateSignUpVerificationCode();
+  // console.log("[CODE]: ", verificationCode);
   const verificationCodeHash = hashSignUpVerificationCode(email, verificationCode);
   const passwordHash = await hashPassword(password);
   const name = buildDisplayNameFromEmail(email);
