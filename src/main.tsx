@@ -9,6 +9,8 @@ if (!rootElement) {
   throw new Error("Không tìm thấy phần tử #root");
 }
 
+// cool
+
 createRoot(rootElement).render(
   <StrictMode>
     <App />
