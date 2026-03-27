@@ -220,12 +220,16 @@ export async function sendConversationMessage({
     body: JSON.stringify(message),
   });
 
-  await requestFirebaseJson(`conversations/${conversationId}`, {
-    method: "PATCH",
-    body: JSON.stringify({
-      updatedAt: timestamp,
-    }),
-  });
+  try {
+    await requestFirebaseJson(`conversations/${conversationId}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        updatedAt: timestamp,
+      }),
+    });
+  } catch (error) {
+    console.warn("[messages] Could not update conversation metadata:", error);
+  }
 
   return message;
 }
@@ -251,17 +255,53 @@ export function subscribeRealtimePath(path: string, onChange: () => void) {
   }
 
   const eventSource = new EventSource(buildFirebasePath(path));
+  let pollingIntervalId: number | null = null;
+
+  const stopPolling = () => {
+    if (pollingIntervalId === null) {
+      return;
+    }
+
+    window.clearInterval(pollingIntervalId);
+    pollingIntervalId = null;
+  };
+
+  const startPolling = () => {
+    if (pollingIntervalId !== null) {
+      return;
+    }
+
+    pollingIntervalId = window.setInterval(() => {
+      onChange();
+    }, 3000);
+  };
+
   const handler = () => {
     onChange();
+  };
+
+  const handleOpen = () => {
+    stopPolling();
+  };
+
+  const handleError = () => {
+    startPolling();
   };
 
   const typedHandler = handler as EventListener;
   eventSource.addEventListener("put", typedHandler);
   eventSource.addEventListener("patch", typedHandler);
+  eventSource.addEventListener("open", handleOpen as EventListener);
+  eventSource.addEventListener("error", handleError as EventListener);
+
+  onChange();
 
   return () => {
     eventSource.removeEventListener("put", typedHandler);
     eventSource.removeEventListener("patch", typedHandler);
+    eventSource.removeEventListener("open", handleOpen as EventListener);
+    eventSource.removeEventListener("error", handleError as EventListener);
     eventSource.close();
+    stopPolling();
   };
 }

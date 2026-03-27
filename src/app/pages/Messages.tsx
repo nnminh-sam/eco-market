@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import { useMessages } from "../context/MessageContext";
@@ -8,6 +8,7 @@ import { Card, CardContent } from "../components/ui/card";
 import { ArrowLeft, Send, User, Smile } from "lucide-react";
 import { ScrollArea } from "../components/ui/scroll-area";
 import { User as UserType } from "../types/product";
+import { toast } from "sonner";
 
 interface MessagesLocationState {
   product?: {
@@ -32,6 +33,10 @@ export function Messages() {
   const [searchParams] = useSearchParams();
   const [selectedConversation, setSelectedConversation] = useState(conversations[0]?.id || null);
   const [messageInput, setMessageInput] = useState("");
+  const [isSendingMessage, setIsSendingMessage] = useState(false);
+  const messagePaneRef = useRef<HTMLDivElement | null>(null);
+  const messageInputRef = useRef<HTMLInputElement | null>(null);
+  const isSendingMessageRef = useRef(false);
   const locationState = location.state as MessagesLocationState | null;
   const requestedConversationId = searchParams.get("conversation");
 
@@ -121,12 +126,79 @@ export function Messages() {
   const currentConversation = conversations.find((c) => c.id === selectedConversation);
   const messages = currentConversation ? getConversationMessages(currentConversation.id) : [];
 
-  const handleSendMessage = (e: FormEvent) => {
-    e.preventDefault();
-    if (!messageInput.trim() || !currentConversation) return;
+  const scrollMessagesToBottom = useCallback(() => {
+    const paneElement = messagePaneRef.current;
+    if (!paneElement) {
+      return;
+    }
 
-    void sendMessage(currentConversation.id, messageInput);
+    const viewportElement = paneElement.querySelector<HTMLElement>(
+      "[data-chat-scroll-area='messages'] [data-slot='scroll-area-viewport']",
+    );
+
+    if (!viewportElement) {
+      return;
+    }
+
+    viewportElement.scrollTop = viewportElement.scrollHeight;
+  }, []);
+
+  useEffect(() => {
+    if (!currentConversation) {
+      return;
+    }
+
+    const animationFrameId = window.requestAnimationFrame(() => {
+      scrollMessagesToBottom();
+    });
+
+    return () => {
+      window.cancelAnimationFrame(animationFrameId);
+    };
+  }, [currentConversation?.id, messages.length, scrollMessagesToBottom]);
+
+  const handleSendMessage = async (e: FormEvent) => {
+    e.preventDefault();
+    const nextMessage = messageInput.trim();
+    if (!nextMessage || !currentConversation || isSendingMessageRef.current) {
+      return;
+    }
+
+    isSendingMessageRef.current = true;
+    setIsSendingMessage(true);
     setMessageInput("");
+
+    const sent = await sendMessage(currentConversation.id, nextMessage);
+
+    if (sent) {
+      isSendingMessageRef.current = false;
+      setIsSendingMessage(false);
+      window.requestAnimationFrame(() => {
+        messageInputRef.current?.focus();
+        const inputElement = messageInputRef.current;
+        if (inputElement) {
+          const caretPosition = inputElement.value.length;
+          inputElement.setSelectionRange(caretPosition, caretPosition);
+        }
+      });
+      return;
+    }
+
+    setMessageInput((currentValue) =>
+      currentValue.length === 0 ? nextMessage : currentValue,
+    );
+    isSendingMessageRef.current = false;
+    setIsSendingMessage(false);
+    window.requestAnimationFrame(() => {
+      messageInputRef.current?.focus();
+      const inputElement = messageInputRef.current;
+      if (inputElement) {
+        const caretPosition = inputElement.value.length;
+        inputElement.setSelectionRange(caretPosition, caretPosition);
+      }
+    });
+
+    toast.error("Không thể gửi tin nhắn. Vui lòng thử lại.");
   };
 
   const formatTime = (timestamp: string) => {
@@ -199,11 +271,11 @@ export function Messages() {
               </div>
 
               {/* Messages */}
-              <div className="md:col-span-2 flex flex-col bg-white">
+              <div ref={messagePaneRef} className="md:col-span-2 flex min-h-0 flex-col bg-white">
                 {currentConversation ? (
                   <>
                     {/* Header */}
-                    <div className="p-6 border-b-2 border-[#2d6a6a]/10 bg-gradient-to-r from-[#2d6a6a]/5 to-transparent">
+                    <div className="shrink-0 p-6 border-b-2 border-[#2d6a6a]/10 bg-gradient-to-r from-[#2d6a6a]/5 to-transparent">
                       <Link
                         to={`/product/${currentConversation.productId}`}
                         className="flex items-center gap-4 hover:opacity-80 transition-opacity group"
@@ -225,8 +297,11 @@ export function Messages() {
                     </div>
 
                     {/* Messages */}
-                    <ScrollArea className="flex-1 p-6 bg-gradient-to-b from-[#f5f5dc]/10 to-white">
-                      <div className="space-y-4">
+                    <ScrollArea
+                      data-chat-scroll-area="messages"
+                      className="flex-1 min-h-0 bg-gradient-to-b from-[#f5f5dc]/10 to-white"
+                    >
+                      <div className="space-y-4 p-6">
                         {messages.map((message) => (
                           <div
                             key={message.id}
@@ -260,7 +335,7 @@ export function Messages() {
                     </ScrollArea>
 
                     {/* Input */}
-                    <div className="p-6 border-t-2 border-[#2d6a6a]/10 bg-gradient-to-r from-[#f5f5dc]/20 to-white">
+                    <div className="shrink-0 p-6 border-t-2 border-[#2d6a6a]/10 bg-gradient-to-r from-[#f5f5dc]/20 to-white">
                       <form onSubmit={handleSendMessage} className="flex gap-3">
                         <button 
                           type="button"
@@ -269,6 +344,7 @@ export function Messages() {
                           <Smile className="size-6 text-[#2d6a6a]" />
                         </button>
                         <Input
+                          ref={messageInputRef}
                           placeholder="Nhập tin nhắn..."
                           value={messageInput}
                           onChange={(e) => setMessageInput(e.target.value)}
@@ -276,6 +352,7 @@ export function Messages() {
                         />
                         <Button
                           type="submit"
+                          disabled={isSendingMessage}
                           className="h-12 px-6 bg-[#ff7b3d] hover:bg-[#ff7b3d]/90 text-white shadow-lg hover:shadow-xl rounded-xl transition-all transform hover:-translate-y-0.5"
                         >
                           <Send className="size-5" />

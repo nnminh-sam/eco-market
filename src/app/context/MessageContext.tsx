@@ -42,7 +42,7 @@ interface ProductPreview {
 interface MessageContextType {
   conversations: Conversation[];
   messages: Message[];
-  sendMessage: (conversationId: string, content: string) => Promise<void>;
+  sendMessage: (conversationId: string, content: string) => Promise<boolean>;
   startConversationWithSeller: (product: ProductPreview, seller: User) => Promise<string | null>;
   getConversationMessages: (conversationId: string) => Message[];
   markAsRead: (conversationId: string) => Promise<void>;
@@ -247,17 +247,17 @@ export function MessageProvider({ children }: { children: ReactNode }) {
   const sendMessage = useCallback(
     async (conversationId: string, content: string) => {
       if (!isAuthenticated || !currentUserId) {
-        return;
+        return false;
       }
 
       const normalizedContent = content.trim();
       if (!normalizedContent) {
-        return;
+        return false;
       }
 
       const record = conversationRecords[conversationId];
       if (!record) {
-        return;
+        return false;
       }
 
       const receiverId =
@@ -271,8 +271,10 @@ export function MessageProvider({ children }: { children: ReactNode }) {
           productId: record.productId,
           content: normalizedContent,
         });
+        return true;
       } catch (error) {
         console.error("[messages] Could not send message:", error);
+        return false;
       }
     },
     [conversationRecords, currentUserId, isAuthenticated],
