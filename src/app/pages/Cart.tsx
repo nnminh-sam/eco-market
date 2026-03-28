@@ -153,13 +153,13 @@ export function Cart() {
                       {formatPrice(totalAmount)}
                     </span>
                   </div>
-                  <Button
+                  {/* <Button
                     type="button"
                     className="w-full h-12 bg-[#ff7b3d] hover:bg-[#ff7b3d]/90 text-white rounded-xl font-semibold"
                     onClick={() => toast.success("Chức năng thanh toán sẽ sớm ra mắt!")}
                   >
                     Thanh toán
-                  </Button>
+                  </Button> */}
                 </CardContent>
               </Card>
             </div>
