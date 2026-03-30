@@ -331,7 +331,7 @@ export function MessageProvider({ children }: { children: ReactNode }) {
           otherUser: seller,
         });
 
-        await refreshConversations();
+        void refreshConversations();
         return conversationId;
       } catch (error) {
         console.error("[messages] Could not start conversation:", error);

@@ -89,6 +89,7 @@ export function ProductDetail() {
   const [isEditMode, setIsEditMode] = useState(false);
   const [isSubmittingEdit, setIsSubmittingEdit] = useState(false);
   const [isUploadingEditImages, setIsUploadingEditImages] = useState(false);
+  const [isStartingChat, setIsStartingChat] = useState(false);
   const [editFormData, setEditFormData] = useState<EditProductFormData>({
     name: "",
     price: "",
@@ -181,7 +182,16 @@ export function ProductDetail() {
       return;
     }
 
-    const conversationId = await startConversationWithSeller(product.seller);
+    setIsStartingChat(true);
+    let conversationId: string | null = null;
+    
+    try {
+      conversationId = await startConversationWithSeller(product.seller);
+    } catch (error) {
+      console.error("Lỗi khi kết nối với người bán:", error);
+    } finally {
+      setIsStartingChat(false);
+    }
 
     if (!conversationId) {
       toast.error("Không thể mở cuộc trò chuyện lúc này");
@@ -800,10 +810,20 @@ export function ProductDetail() {
                       </Button>
                       <Button
                         onClick={handleContactSeller}
-                        className="w-full gap-3 h-14 bg-[#ff7b3d] hover:bg-[#ff7b3d]/90 text-white shadow-lg hover:shadow-xl rounded-2xl font-semibold text-lg transition-all transform hover:-translate-y-0.5"
+                        disabled={isStartingChat}
+                        className="w-full gap-3 h-14 bg-[#ff7b3d] hover:bg-[#ff7b3d]/90 text-white shadow-lg hover:shadow-xl rounded-2xl font-semibold text-lg transition-all transform hover:-translate-y-0.5 disabled:opacity-75 disabled:hover:-translate-y-0 disabled:cursor-not-allowed"
                       >
-                        <MessageCircle className="size-5" />
-                        Nhắn tin cho người bán
+                        {isStartingChat ? (
+                          <>
+                            <Loader2 className="size-5 animate-spin" />
+                            Đang kết nối...
+                          </>
+                        ) : (
+                          <>
+                            <MessageCircle className="size-5" />
+                            Nhắn tin cho người bán
+                          </>
+                        )}
                       </Button>
                     </>
                   )}
